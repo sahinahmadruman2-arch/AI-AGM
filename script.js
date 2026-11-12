@@ -1,10 +1,26 @@
 
-/* =================================
-   AGM AI — CORE ENGINE
-   Version 1.0
-================================= */
+/* ======================================
+   AGM AI — LOCAL AI ENGINE
+   Transformers.js + CPU/WASM
+   Version 1.1
+====================================== */
 
-const $ = (id) => document.getElementById(id);
+import {
+  pipeline,
+  env
+} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+
+// CONFIGURATION
+
+const MODEL_ID =
+  "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
+
+env.allowLocalModels = false;
+env.allowRemoteModels = true;
+
+// ELEMENTS
+
+const $ = id => document.getElementById(id);
 
 const promptInput = $("prompt");
 const messages = $("messages");
@@ -13,17 +29,92 @@ const historyBox = $("history");
 const chatArea = $("chatArea");
 const sidebar = $("sidebar");
 const overlay = $("overlay");
+const modelLabel = document.querySelector(".model-label");
 
-let chats = JSON.parse(localStorage.getItem("agm_chats") || "[]");
-let currentChat = null;
+let chats = [];
 
-// SAVE DATA
-
-function saveChats() {
-  localStorage.setItem("agm_chats", JSON.stringify(chats));
+try {
+  chats = JSON.parse(
+    localStorage.getItem("agm_chats") || "[]"
+  );
+  if (!Array.isArray(chats)) chats = [];
+} catch {
+  chats = [];
 }
 
-// CREATE CHAT
+let currentChat = null;
+let ai = null;
+let loadingModel = null;
+let busy = false;
+
+// STATUS
+
+function setStatus(text) {
+  modelLabel.textContent = "✦ " + text;
+}
+
+// SAVE
+
+function saveChats() {
+  try {
+    localStorage.setItem(
+      "agm_chats",
+      JSON.stringify(chats)
+    );
+  } catch (error) {
+    console.warn("Chat storage unavailable:", error);
+  }
+}
+
+// MODEL LOADING
+
+async function loadAI() {
+  if (ai) return ai;
+
+  if (loadingModel) return loadingModel;
+
+  loadingModel = (async () => {
+    try {
+      setStatus("Downloading AI model...");
+
+      const model = await pipeline(
+        "text-generation",
+        MODEL_ID,
+        {
+          dtype: "q4",
+          progress_callback: progress => {
+            if (progress.status === "progress") {
+              const percent = Math.round(
+                progress.progress || 0
+              );
+
+              setStatus("Downloading " + percent + "%");
+            } else if (progress.status === "initiate") {
+              setStatus("Preparing model...");
+            } else if (progress.status === "done") {
+              setStatus("Preparing AI...");
+            }
+          }
+        }
+      );
+
+      ai = model;
+      setStatus("AGM AI Ready");
+
+      return ai;
+
+    } catch (error) {
+      console.error("Model loading failed:", error);
+      setStatus("Model loading failed");
+      loadingModel = null;
+      throw error;
+    }
+  })();
+
+  return loadingModel;
+}
+
+// CHAT MANAGEMENT
 
 function createChat() {
   const chat = {
@@ -40,16 +131,15 @@ function createChat() {
   renderHistory();
   renderMessages();
   closeSidebar();
+
   promptInput.focus();
 }
-
-// GET CURRENT CHAT
 
 function getCurrentChat() {
   return chats.find(chat => chat.id === currentChat);
 }
 
-// RENDER HISTORY
+// HISTORY
 
 function renderHistory() {
   historyBox.innerHTML = "";
@@ -57,12 +147,15 @@ function renderHistory() {
   chats.forEach(chat => {
     const item = document.createElement("div");
 
-    item.className = "history-item" +
+    item.className =
+      "history-item" +
       (chat.id === currentChat ? " active" : "");
 
     item.textContent = chat.title;
 
     item.addEventListener("click", () => {
+      if (busy) return;
+
       currentChat = chat.id;
       renderHistory();
       renderMessages();
@@ -73,7 +166,7 @@ function renderHistory() {
   });
 }
 
-// RENDER MESSAGES
+// MESSAGES
 
 function renderMessages() {
   messages.innerHTML = "";
@@ -89,15 +182,18 @@ function renderMessages() {
 
   chat.messages.forEach(message => {
     const wrapper = document.createElement("div");
+
     wrapper.className = "message " + message.role;
 
     const label = document.createElement("div");
     label.className = "message-label";
+
     label.textContent =
       message.role === "user" ? "YOU" : "AGM AI";
 
     const content = document.createElement("div");
     content.className = "message-content";
+
     content.textContent = message.text;
 
     wrapper.append(label, content);
@@ -106,8 +202,6 @@ function renderMessages() {
 
   scrollToBottom();
 }
-
-// SCROLL
 
 function scrollToBottom() {
   requestAnimationFrame(() => {
@@ -118,22 +212,84 @@ function scrollToBottom() {
   });
 }
 
+// BUILD MODEL PROMPT
+
+function buildPrompt(chat) {
+  const recent = chat.messages.slice(-8);
+
+  let prompt =
+    "<|im_start|>system\n" +
+    "You are AGM AI, a helpful and friendly AI assistant. " +
+    "Answer clearly and honestly. Keep answers useful and concise. " +
+    "<|im_end|>\n";
+
+  recent.forEach(message => {
+    const role =
+      message.role === "user" ? "user" : "assistant";
+
+    prompt +=
+      "<|im_start|>" + role + "\n" +
+      message.text.slice(0, 1200) +
+      "<|im_end|>\n";
+  });
+
+  prompt += "<|im_start|>assistant\n";
+
+  return prompt;
+}
+
+// GENERATE RESPONSE
+
+async function generateAnswer(chat) {
+  const model = await loadAI();
+
+  setStatus("Thinking...");
+
+  const result = await model(
+    buildPrompt(chat),
+    {
+      max_new_tokens: 100,
+      temperature: 0.7,
+      do_sample: true,
+      top_p: 0.9,
+      repetition_penalty: 1.1,
+      return_full_text: false
+    }
+  );
+
+  let answer = result[0]?.generated_text ?? "";
+
+  if (typeof answer !== "string") {
+    answer = String(answer);
+  }
+
+  answer = answer
+    .replace(/<\|im_end\|>[\s\S]*/g, "")
+    .replace(/<\|im_start\|>[\s\S]*/g, "")
+    .trim();
+
+  return answer || "I couldn't generate a response. Please try again.";
+}
+
 // SEND MESSAGE
 
-function sendMessage(text) {
+async function sendMessage(text) {
   text = text.trim();
 
-  if (!text) return;
+  if (!text || busy) return;
 
-  if (!currentChat) {
-    createChat();
-  }
+  if (!currentChat) createChat();
 
   const chat = getCurrentChat();
 
+  if (!chat) return;
+
+  busy = true;
+  $("sendBtn").disabled = true;
+
   chat.messages.push({
     role: "user",
-    text: text
+    text
   });
 
   if (chat.messages.length === 1) {
@@ -150,11 +306,53 @@ function sendMessage(text) {
 
   promptInput.value = "";
   promptInput.style.height = "auto";
+
+  try {
+    const answer = await generateAnswer(chat);
+
+    chat.messages.push({
+      role: "assistant",
+      text: answer
+    });
+
+    chat.updated = Date.now();
+    saveChats();
+
+    if (currentChat === chat.id) {
+      renderMessages();
+    }
+
+    setStatus("AGM AI Ready");
+
+  } catch (error) {
+    console.error(error);
+
+    chat.messages.push({
+      role: "assistant",
+      text:
+        "Sorry! I couldn't load or run my local AI model. " +
+        "Please check your internet connection, available memory, " +
+        "and try again."
+    });
+
+    saveChats();
+
+    if (currentChat === chat.id) {
+      renderMessages();
+    }
+
+    setStatus("AI Error");
+  } finally {
+    busy = false;
+    $("sendBtn").disabled = false;
+  }
 }
 
-// NEW CHAT BUTTON
+// NEW CHAT
 
-$("newChat").addEventListener("click", createChat);
+$("newChat").addEventListener("click", () => {
+  if (!busy) createChat();
+});
 
 // SEND BUTTON
 
@@ -165,16 +363,20 @@ $("sendBtn").addEventListener("click", () => {
 // ENTER TO SEND
 
 promptInput.addEventListener("keydown", event => {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (
+    event.key === "Enter" &&
+    !event.shiftKey
+  ) {
     event.preventDefault();
     sendMessage(promptInput.value);
   }
 });
 
-// AUTO TEXTAREA HEIGHT
+// AUTO TEXTAREA
 
 promptInput.addEventListener("input", () => {
   promptInput.style.height = "auto";
+
   promptInput.style.height =
     Math.min(promptInput.scrollHeight, 140) + "px";
 });
@@ -216,25 +418,27 @@ if (savedTheme === "light") {
 $("themeBtn").addEventListener("click", () => {
   document.body.classList.toggle("light");
 
-  const light = document.body.classList.contains("light");
+  const light =
+    document.body.classList.contains("light");
 
   localStorage.setItem(
     "agm_theme",
     light ? "light" : "dark"
   );
 
-  $("themeBtn").textContent = light ? "☾" : "☼";
+  $("themeBtn").textContent =
+    light ? "☾" : "☼";
 });
 
 // STARTUP
 
 if (chats.length > 0) {
   currentChat = chats[0].id;
-} else {
-  currentChat = null;
 }
 
 renderHistory();
 renderMessages();
 
-console.log("AGM AI v1.0 initialized.");
+setStatus("Local AI · Not loaded");
+
+console.log("AGM AI local engine initialized.");
