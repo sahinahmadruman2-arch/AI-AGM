@@ -1,0 +1,84 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#09090f">
+  <title>AGM AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="app">
+
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-icon">A</div>
+        <span>AGM AI</span>
+        <button class="close-sidebar" id="closeSidebar">×</button>
+      </div>
+
+      <button class="new-chat" id="newChat">
+        <span>＋</span> New Chat
+      </button>
+
+      <div class="history-title">RECENT CHATS</div>
+      <div id="history" class="history"></div>
+
+      <div class="sidebar-bottom">
+        <div class="profile-avatar">A</div>
+        <div>
+          <strong>AGM Studio</strong>
+          <small>Personal AI Workspace</small>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+
+      <header class="topbar">
+        <button id="menuBtn" class="icon-btn">☰</button>
+        <div class="mobile-brand">AGM <span>AI</span></div>
+        <button id="themeBtn" class="icon-btn">☼</button>
+      </header>
+
+      <section class="chat-area" id="chatArea">
+
+        <div class="welcome" id="welcome">
+          <div class="welcome-logo">A</div>
+          <div class="greeting">WELCOME TO AGM AI</div>
+          <h1>Where ideas<br><span>become reality.</span></h1>
+          <p>Your personal AI workspace. What would you like to explore today?</p>
+
+          <div class="suggestions">
+            <button data-prompt="Help me write something creative">✦ <span>Creative writing</span></button>
+            <button data-prompt="Help me learn programming">⌘ <span>Learn coding</span></button>
+            <button data-prompt="Give me some new ideas">✧ <span>Explore ideas</span></button>
+            <button data-prompt="Explain something interesting">◈ <span>Learn something</span></button>
+          </div>
+        </div>
+
+        <div class="messages" id="messages"></div>
+
+      </section>
+
+      <footer class="composer-area">
+        <div class="composer">
+          <textarea id="prompt" placeholder="Message AGM AI..." rows="1"></textarea>
+          <div class="composer-bottom">
+            <span class="model-label">✦ AGM AI</span>
+            <button id="sendBtn" class="send-btn">↑</button>
+          </div>
+        </div>
+        <p class="disclaimer">AGM AI can make mistakes. Verify important information.</p>
+      </footer>
+
+    </main>
+  </div>
+
+  <div id="overlay" class="overlay"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
