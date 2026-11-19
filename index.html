@@ -3,264 +3,124 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-
-  <meta name="viewport"
-    content="width=device-width, initial-scale=1.0">
-
-  <meta name="theme-color" content="#09090f">
-
-  <meta name="description"
-    content="AGM AI - Your personal AI workspace.">
-
-  <meta name="mobile-web-app-capable" content="yes">
-
-  <title>AGM AI — Your AI Workspace</title>
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#090912">
+  <title>AGM AI</title>
   <link rel="stylesheet" href="style.css">
-
-  <link rel="preconnect"
-    href="https://cdn.jsdelivr.net">
-
-  <link rel="preconnect"
-    href="https://huggingface.co">
-
-  <link rel="preconnect"
-    href="https://fonts.googleapis.com">
-
 </head>
-
 <body>
-
   <div class="app">
 
-    <!-- SIDEBAR -->
-
     <aside class="sidebar" id="sidebar">
-
       <div class="brand">
-
         <div class="brand-icon">A</div>
-
-        <span>AGM AI</span>
-
-        <button
-          class="close-sidebar"
-          id="closeSidebar"
-          aria-label="Close sidebar">
-          ×
-        </button>
-
+        <div>
+          <strong>AGM AI</strong>
+          <small>Intelligence, simplified.</small>
+        </div>
       </div>
 
-      <!-- NEW CHAT -->
+      <button class="new-chat" id="newChat">＋ New Chat</button>
 
-      <button class="new-chat" id="newChat">
-
-        <span>＋</span>
-        New Chat
-
-      </button>
-
-      <!-- CHAT HISTORY -->
-
-      <div class="history-title">
-        RECENT CHATS
+      <div class="side-label">WORKSPACE</div>
+      <div class="side-info">
+        <span>✦</span>
+        <div>
+          <strong>Hybrid AI</strong>
+          <small>Local model + Web tools</small>
+        </div>
       </div>
 
-      <div
-        id="history"
-        class="history">
+      <div class="side-label">YOUR AI</div>
+      <div class="side-info">
+        <span>◈</span>
+        <div>
+          <strong>Qwen 2.5 · 0.5B</strong>
+          <small id="sideModelStatus">Not loaded</small>
+        </div>
       </div>
-
-      <!-- PROFILE -->
 
       <div class="sidebar-bottom">
-
         <div class="profile-avatar">A</div>
-
-        <div>
+        <div class="profile-text">
           <strong>AGM Studio</strong>
-          <small>Personal AI Workspace</small>
+          <small>Local AI workspace</small>
         </div>
-
+        <button id="themeButton" class="icon-button" title="Toggle theme">☼</button>
       </div>
-
     </aside>
 
-
-    <!-- MAIN CONTENT -->
-
     <main class="main">
-
-      <!-- TOPBAR -->
-
       <header class="topbar">
-
-        <button
-          id="menuBtn"
-          class="icon-btn"
-          aria-label="Open menu">
-          ☰
-        </button>
-
-        <div class="mobile-brand">
-          AGM <span>AI</span>
+        <button id="menuButton" class="icon-button mobile-only">☰</button>
+        <div class="top-title">AGM AI <span class="beta">BETA</span></div>
+        <div class="top-status">
+          <span class="status-dot"></span>
+          <span id="modelStatus">Local AI · Not loaded</span>
         </div>
-
-        <button
-          id="themeBtn"
-          class="icon-btn"
-          aria-label="Change theme">
-          ☼
-        </button>
-
       </header>
 
-
-      <!-- CHAT AREA -->
-
-      <section
-        class="chat-area"
-        id="chatArea">
-
-        <!-- WELCOME SCREEN -->
-
-        <div
-          class="welcome"
-          id="welcome">
-
-          <div class="welcome-logo">
-            A
-          </div>
-
-          <div class="greeting">
-            WELCOME TO AGM AI
-          </div>
-
-          <h1>
-            Where ideas
-            <br>
-            <span>become reality.</span>
-          </h1>
-
-          <p>
-            Your personal AI workspace.
-            What would you like to explore today?
+      <section class="chat-area" id="chatArea">
+        <div class="welcome" id="welcome">
+          <div class="welcome-orb">✦</div>
+          <p class="eyebrow">WELCOME TO AGM AI</p>
+          <h1>What can I help<br>you <span>discover?</span></h1>
+          <p class="welcome-description">
+            Ask questions, explore ideas, research the web or use built-in tools.
           </p>
 
-          <!-- SUGGESTIONS -->
-
           <div class="suggestions">
-
-            <button
-              data-prompt="Help me write something creative">
-
-              ✦
-              <span>Creative writing</span>
-
+            <button class="suggestion" data-prompt="Explain how artificial intelligence works.">
+              <span>✧</span>
+              <div><strong>Learn something</strong><small>Explain a complex topic</small></div>
             </button>
-
-            <button
-              data-prompt="Help me learn programming">
-
-              ⌘
-              <span>Learn coding</span>
-
+            <button class="suggestion" data-prompt="Search the web for the latest Roblox news.">
+              <span>⌕</span>
+              <div><strong>Research the web</strong><small>Find information online</small></div>
             </button>
-
-            <button
-              data-prompt="Give me some new ideas">
-
-              ✧
-              <span>Explore ideas</span>
-
+            <button class="suggestion" data-prompt="Calculate 125 * 48 + 350.">
+              <span>∑</span>
+              <div><strong>Use a tool</strong><small>Calculate something</small></div>
             </button>
-
-            <button
-              data-prompt="Explain something interesting">
-
-              ◈
-              <span>Learn something</span>
-
+            <button class="suggestion" data-prompt="Give me five creative website ideas.">
+              <span>✦</span>
+              <div><strong>Get creative</strong><small>Brainstorm new ideas</small></div>
             </button>
-
           </div>
-
         </div>
 
-
-        <!-- CHAT MESSAGES -->
-
-        <div
-          class="messages"
-          id="messages">
-        </div>
-
+        <div class="messages" id="messages"></div>
       </section>
 
-
-      <!-- MESSAGE COMPOSER -->
-
-      <footer class="composer-area">
-
-        <div class="composer">
-
-          <textarea
-            id="prompt"
-            placeholder="Message AGM AI..."
-            rows="1"
-            aria-label="Message AGM AI">
-          </textarea>
-
-          <div class="composer-bottom">
-
-            <!-- AI ENGINE STATUS -->
-
-            <span class="model-label">
-              ✦ Local AI · Not loaded
-            </span>
-
-            <!-- SEND BUTTON -->
-
-            <button
-              id="sendBtn"
-              class="send-btn"
-              aria-label="Send message">
-
-              ↑
-
-            </button>
-
-          </div>
-
+      <footer class="composer-wrap">
+        <div class="research-indicator" id="researchIndicator">
+          <span class="status-dot"></span>
+          <span id="activityText">Ready</span>
         </div>
 
+        <form class="composer" id="chatForm">
+          <textarea
+            id="messageInput"
+            rows="1"
+            placeholder="Message AGM AI..."
+            autocomplete="off"
+          ></textarea>
+          <div class="composer-bottom">
+            <div class="composer-tools">
+              <span class="tool-label">✦ Hybrid mode</span>
+              <span class="tool-label">◉ Browser tools</span>
+            </div>
+            <button type="submit" id="sendButton" class="send-button" title="Send message">↑</button>
+          </div>
+        </form>
         <p class="disclaimer">
-          AGM AI can make mistakes.
-          Verify important information.
+          AGM AI can make mistakes. Verify important information from sources.
         </p>
-
       </footer>
-
     </main>
-
   </div>
 
-
-  <!-- MOBILE SIDEBAR OVERLAY -->
-
-  <div
-    id="overlay"
-    class="overlay">
-  </div>
-
-
-  <!-- AGM AI JAVASCRIPT MODULE -->
-
-  <script
-    type="module"
-    src="script.js">
-  </script>
-
+  <div class="mobile-overlay" id="mobileOverlay"></div>
+  <script type="module" src="script.js"></script>
 </body>
 </html>
