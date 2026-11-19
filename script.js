@@ -1,690 +1,452 @@
 
-/* ==========================================
-   AGM AI — LOCAL INTELLIGENCE ENGINE
-   Version 1.2
-   Transformers.js + Qwen2.5
-   CPU / WASM
-========================================== */
-
 import {
-  pipeline,
-  env
-} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+  loadMessages,
+  saveMessages,
+  clearMemory,
+  runTool,
+  researchWeb
+} from "./engine.js";
 
-// ==========================================
-// CONFIGURATION
-// ==========================================
+const $ = (id) => document.getElementById(id);
 
-const MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
+const chatArea = $("chatArea");
+const messagesBox = $("messages");
+const welcome = $("welcome");
+const form = $("chatForm");
+const input = $("messageInput");
+const sendButton = $("sendButton");
 
 const SYSTEM_PROMPT = `
-You are AGM AI, an intelligent and friendly AI assistant.
+You are AGM AI, an AI assistant created by AGM Studio.
 
 IDENTITY:
 - Your name is AGM AI.
-- You were created as part of AGM Studio.
-- Never call yourself Alex Chen, ChatGPT, or another assistant.
-- If someone asks your name, say AGM AI.
+- Never claim to be ChatGPT, Gemini, or another assistant.
+- Do not invent a human identity.
 
 BEHAVIOR:
-- Answer the actual question directly.
-- Be helpful, clear, accurate and conversational.
-- Never repeat your introduction unnecessarily.
-- Do not invent facts.
-- If you do not know something, admit it.
-- Avoid repeating the same sentences.
-- Keep simple answers short.
-- Explain complicated topics step by step.
-- Follow the language used by the user.
-- You can communicate in English and Bangla.
-- Do not claim to have internet access or tools you do not have.
-
-You are AGM AI. Stay consistent with this identity.
+- Be helpful, clear, accurate and honest.
+- Answer in the language used by the user.
+- Avoid repeating the same phrases.
+- If you do not know something, say so.
+- Never invent sources, facts or search results.
+- Use the provided research information when available.
+- Clearly explain when information may be incomplete.
+- Do not claim to have browsed the internet unless research results were provided.
+- Keep answers reasonably concise unless detail is requested.
 `;
 
-// ==========================================
-// TRANSFORMERS CONFIGURATION
-// ==========================================
-
-env.allowLocalModels = false;
-env.allowRemoteModels = true;
-
-// ==========================================
-// ELEMENTS
-// ==========================================
-
-const $ = id => document.getElementById(id);
-
-const promptInput = $("prompt");
-const messages = $("messages");
-const welcome = $("welcome");
-const historyBox = $("history");
-const chatArea = $("chatArea");
-const sidebar = $("sidebar");
-const overlay = $("overlay");
-const sendBtn = $("sendBtn");
-const modelLabel = document.querySelector(".model-label");
-
-// ==========================================
-// STATE
-// ==========================================
-
-let chats = [];
-
-try {
-  chats = JSON.parse(
-    localStorage.getItem("agm_chats") || "[]"
-  );
-
-  if (!Array.isArray(chats)) chats = [];
-} catch {
-  chats = [];
-}
-
-let currentChat = null;
-let ai = null;
-let loadingModel = null;
+let chatMessages = loadMessages();
 let busy = false;
+let currentAssistantElement = null;
+let currentAssistantText = "";
+let currentSources = [];
+let requestCounter = 0;
+let activeRequestId = null;
 
-// ==========================================
-// STATUS
-// ==========================================
+const worker = new Worker(
+  new URL("./ai-worker.js", import.meta.url),
+  { type: "module" }
+);
 
-function setStatus(status) {
-  if (modelLabel) {
-    modelLabel.textContent = "✦ " + status;
-  }
+function setActivity(text) {
+  $("activityText").textContent = text;
 }
 
-// ==========================================
-// STORAGE
-// ==========================================
-
-function saveChats() {
-  try {
-    localStorage.setItem(
-      "agm_chats",
-      JSON.stringify(chats)
-    );
-  } catch (error) {
-    console.warn("Storage error:", error);
-    setStatus("Storage limit reached");
-  }
+function setModelStatus(text) {
+  $("modelStatus").textContent = text;
+  $("sideModelStatus").textContent = text;
 }
-
-// ==========================================
-// LOAD AI MODEL
-// ==========================================
-
-async function loadAI() {
-
-  if (ai) return ai;
-
-  if (loadingModel) return loadingModel;
-
-  loadingModel = (async () => {
-
-    try {
-
-      setStatus("Preparing local AI...");
-
-      const generator = await pipeline(
-        "text-generation",
-        MODEL_ID,
-        {
-          dtype: "q4",
-
-          progress_callback: progress => {
-
-            if (progress.status === "initiate") {
-              setStatus("Starting download...");
-            }
-
-            if (progress.status === "progress") {
-
-              const percent = Math.round(
-                progress.progress || 0
-              );
-
-              setStatus(
-                "Downloading " + percent + "%"
-              );
-            }
-
-            if (progress.status === "done") {
-              setStatus("Loading model...");
-            }
-
-          }
-        }
-      );
-
-      ai = generator;
-
-      setStatus("AGM AI Ready");
-
-      return generator;
-
-    } catch (error) {
-
-      console.error("AI loading error:", error);
-
-      loadingModel = null;
-
-      setStatus("Model loading failed");
-
-      throw error;
-    }
-
-  })();
-
-  return loadingModel;
-}
-
-// ==========================================
-// CHAT MANAGEMENT
-// ==========================================
-
-function createChat() {
-
-  const chat = {
-    id: Date.now().toString(),
-    title: "New Chat",
-    messages: [],
-    updated: Date.now()
-  };
-
-  chats.unshift(chat);
-
-  currentChat = chat.id;
-
-  saveChats();
-  renderHistory();
-  renderMessages();
-  closeSidebar();
-
-  promptInput.focus();
-}
-
-function getCurrentChat() {
-
-  return chats.find(
-    chat => chat.id === currentChat
-  );
-}
-
-// ==========================================
-// CHAT HISTORY
-// ==========================================
-
-function renderHistory() {
-
-  historyBox.innerHTML = "";
-
-  chats.forEach(chat => {
-
-    const item = document.createElement("div");
-
-    item.className =
-      "history-item" +
-      (chat.id === currentChat ? " active" : "");
-
-    item.textContent = chat.title;
-
-    item.addEventListener("click", () => {
-
-      if (busy) return;
-
-      currentChat = chat.id;
-
-      renderHistory();
-      renderMessages();
-
-      closeSidebar();
-
-    });
-
-    historyBox.appendChild(item);
-
-  });
-}
-
-// ==========================================
-// MESSAGE DISPLAY
-// ==========================================
-
-function addMessage(role, text) {
-
-  const wrapper = document.createElement("div");
-
-  wrapper.className = "message " + role;
-
-  const label = document.createElement("div");
-
-  label.className = "message-label";
-
-  label.textContent =
-    role === "user" ? "YOU" : "AGM AI";
-
-  const content = document.createElement("div");
-
-  content.className = "message-content";
-
-  content.textContent = text;
-
-  wrapper.append(label, content);
-
-  messages.appendChild(wrapper);
-
-  scrollToBottom();
-
-  return content;
-}
-
-function renderMessages() {
-
-  messages.innerHTML = "";
-
-  const chat = getCurrentChat();
-
-  if (!chat || !chat.messages.length) {
-
-    welcome.style.display = "block";
-
-    return;
-  }
-
-  welcome.style.display = "none";
-
-  chat.messages.forEach(message => {
-
-    addMessage(
-      message.role,
-      message.text
-    );
-
-  });
-
-  scrollToBottom();
-}
-
-// ==========================================
-// SCROLL
-// ==========================================
 
 function scrollToBottom() {
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
 
-  requestAnimationFrame(() => {
+function createMessageElement(role, text = "") {
+  const wrapper = document.createElement("div");
+  wrapper.className = `message ${role}`;
 
-    chatArea.scrollTo({
-      top: chatArea.scrollHeight,
-      behavior: "smooth"
-    });
+  const avatar = document.createElement("div");
+  avatar.className = "message-avatar";
+  avatar.textContent = role === "user" ? "U" : "A";
 
+  const body = document.createElement("div");
+  body.className = "message-body";
+
+  const name = document.createElement("div");
+  name.className = "message-name";
+  name.textContent = role === "user" ? "You" : "AGM AI";
+
+  const content = document.createElement("div");
+  content.className = "message-content";
+  content.textContent = text;
+
+  body.append(name, content);
+  wrapper.append(avatar, body);
+
+  messagesBox.appendChild(wrapper);
+
+  return { wrapper, body, content };
+}
+
+function addSources(body, sources) {
+  if (!sources || !sources.length) return;
+
+  const container = document.createElement("div");
+  container.className = "sources";
+
+  const heading = document.createElement("div");
+  heading.className = "message-name";
+  heading.textContent = "Research sources";
+  container.appendChild(heading);
+
+  sources.forEach((source) => {
+    const link = document.createElement("a");
+
+    link.className = "source-card";
+    link.href = source.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+
+    const title = document.createElement("strong");
+    title.textContent = source.title;
+
+    const description = document.createElement("small");
+    description.textContent = source.snippet;
+
+    link.append(title, description);
+    container.appendChild(link);
   });
+
+  body.appendChild(container);
 }
 
-// ==========================================
-// CHAT CONTEXT
-// ==========================================
+function addCopyButton(body, getText) {
+  const actions = document.createElement("div");
+  actions.className = "message-actions";
 
-function buildMessages(chat) {
+  const copy = document.createElement("button");
+  copy.textContent = "Copy answer";
 
-  const recentMessages = chat.messages
-    .slice(-8)
-    .map(message => ({
-
-      role: message.role,
-
-      content: message.text.slice(0, 1500)
-
-    }));
-
-  return [
-
-    {
-      role: "system",
-      content: SYSTEM_PROMPT
-    },
-
-    ...recentMessages
-
-  ];
-}
-
-// ==========================================
-// AI RESPONSE
-// ==========================================
-
-async function generateAnswer(chat) {
-
-  const generator = await loadAI();
-
-  setStatus("Thinking...");
-
-  const conversation = buildMessages(chat);
-
-  const result = await generator(
-    conversation,
-    {
-      max_new_tokens: 180,
-      do_sample: true,
-      temperature: 0.7,
-      top_p: 0.85,
-      repetition_penalty: 1.15
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(getText());
+      copy.textContent = "Copied!";
+      setTimeout(() => copy.textContent = "Copy answer", 1200);
+    } catch {
+      copy.textContent = "Copy unavailable";
     }
-  );
+  });
 
-  let generated = result?.[0]?.generated_text;
-
-  let answer = "";
-
-  // Chat output can be an array of messages.
-
-  if (Array.isArray(generated)) {
-
-    const lastMessage = generated
-      .filter(item => item.role === "assistant")
-      .pop();
-
-    answer = lastMessage?.content || "";
-
-  } else if (typeof generated === "string") {
-
-    answer = generated;
-
-  }
-
-  answer = answer.trim();
-
-  // Remove accidental special tokens.
-
-  answer = answer
-    .replace(/<\|im_end\|>/g, "")
-    .replace(/<\|endoftext\|>/g, "")
-    .trim();
-
-  if (!answer) {
-
-    throw new Error("Empty AI response");
-
-  }
-
-  return answer;
+  actions.appendChild(copy);
+  body.appendChild(actions);
 }
 
-// ==========================================
-// SEND MESSAGE
-// ==========================================
+function showWelcomeIfNeeded() {
+  welcome.style.display = messagesBox.children.length ? "none" : "";
+}
 
-async function sendMessage(text) {
+function renderSavedMessages() {
+  messagesBox.innerHTML = "";
 
-  text = text.trim();
+  for (const message of chatMessages) {
+    const item = createMessageElement(message.role, message.content);
+
+    if (message.role === "assistant") {
+      addCopyButton(item.body, () => message.content);
+    }
+  }
+
+  showWelcomeIfNeeded();
+  scrollToBottom();
+}
+
+function detectResearchIntent(text) {
+  return /\b(search the web|search online|research|latest|current|today|news|recent|2026|right now|who won|price today|weather today)\b/i.test(text);
+}
+
+function getSearchQuery(text) {
+  return text
+    .replace(/^(please\s+)?(search|research|find)\s+(the\s+)?(web|internet|online)?\s*(for|about)?\s*/i, "")
+    .trim();
+}
+
+function setBusy(value) {
+  busy = value;
+  sendButton.disabled = value;
+  input.disabled = value;
+  sendButton.textContent = value ? "…" : "↑";
+}
+
+async function sendMessage(rawText) {
+  const text = rawText.trim();
 
   if (!text || busy) return;
 
-  if (!currentChat) {
-    createChat();
-  }
-
-  const chat = getCurrentChat();
-
-  if (!chat) return;
-
-  busy = true;
-
-  sendBtn.disabled = true;
-
   welcome.style.display = "none";
 
-  // Save user message.
+  const userElement = createMessageElement("user", text);
 
-  chat.messages.push({
-
+  chatMessages.push({
     role: "user",
-    text: text
-
+    content: text
   });
 
-  if (chat.messages.length === 1) {
+  saveMessages(chatMessages);
 
-    chat.title = text.length > 28
-      ? text.slice(0, 28) + "..."
-      : text;
+  input.value = "";
+  input.style.height = "auto";
 
-  }
+  setBusy(true);
+  setActivity("Preparing your request...");
 
-  chat.updated = Date.now();
+  const assistant = createMessageElement("assistant", "Thinking...");
+  currentAssistantElement = assistant;
+  currentAssistantText = "";
+  currentSources = [];
 
-  saveChats();
-
-  renderHistory();
-
-  renderMessages();
-
-  promptInput.value = "";
-
-  promptInput.style.height = "auto";
-
-  // Show loading indicator.
-
-  const loadingMessage = addMessage(
-    "assistant",
-    "Thinking..."
-  );
+  const requestId = ++requestCounter;
+  activeRequestId = requestId;
 
   try {
+    let extraContext = "";
 
-    const answer = await generateAnswer(chat);
+    // Built-in tool routing
+    const toolResult = await runTool(text);
 
-    chat.messages.push({
+    if (toolResult) {
+      extraContext +=
+        `\nTool result (${toolResult.type}): ${toolResult.result}\n`;
 
-      role: "assistant",
-      text: answer
+      setActivity("Using " + toolResult.type + " tool...");
+    }
 
+    // Web research routing
+    if (detectResearchIntent(text)) {
+      setActivity("Searching available web sources...");
+
+      const query = getSearchQuery(text) || text;
+
+      currentSources = await researchWeb(query);
+
+      if (currentSources.length) {
+        extraContext += "\nWeb research results:\n";
+
+        currentSources.forEach((source, index) => {
+          extraContext +=
+            `\n${index + 1}. ${source.title}\n` +
+            `URL: ${source.url}\n` +
+            `Information: ${source.snippet}\n`;
+        });
+
+        setActivity("Research complete. Generating answer...");
+      } else {
+        extraContext +=
+          "\nWeb research was attempted, but no usable results were returned. " +
+          "Be honest that live research was unsuccessful.\n";
+
+        setActivity("No web results found. Using local AI...");
+      }
+    }
+
+    const recentMessages = chatMessages.slice(-8);
+
+    const modelMessages = [
+      {
+        role: "system",
+        content: SYSTEM_PROMPT
+      },
+      ...recentMessages.slice(0, -1),
+      ...(extraContext ? [{
+        role: "system",
+        content: "Additional information for this request:\n" + extraContext
+      }] : []),
+      recentMessages[recentMessages.length - 1]
+    ];
+
+    setActivity("Generating answer with local AI...");
+
+    worker.postMessage({
+      type: "generate",
+      requestId,
+      messages: modelMessages
     });
 
-    chat.updated = Date.now();
-
-    saveChats();
-
-    if (currentChat === chat.id) {
-
-      renderMessages();
-
-    }
-
-    setStatus("AGM AI Ready");
-
   } catch (error) {
-
-    console.error("Generation error:", error);
-
-    loadingMessage.textContent =
-      "I couldn't generate a response. Please try again.";
-
-    setStatus("AI Error");
-
-  } finally {
-
-    busy = false;
-
-    sendBtn.disabled = false;
-
-    promptInput.focus();
-
+    finishWithError(requestId, error.message);
   }
 }
 
-// ==========================================
-// NEW CHAT
-// ==========================================
+function finishWithError(requestId, message) {
+  if (requestId !== activeRequestId) return;
 
-$("newChat").addEventListener(
-  "click",
-  () => {
+  const errorText =
+    "Sorry, something went wrong: " + message +
+    "\nPlease try again.";
 
-    if (!busy) createChat();
+  currentAssistantElement.content.textContent = errorText;
 
-  }
-);
+  chatMessages.push({
+    role: "assistant",
+    content: errorText
+  });
 
-// ==========================================
-// SEND BUTTON
-// ==========================================
+  saveMessages(chatMessages);
 
-sendBtn.addEventListener(
-  "click",
-  () => {
-
-    sendMessage(promptInput.value);
-
-  }
-);
-
-// ==========================================
-// ENTER TO SEND
-// ==========================================
-
-promptInput.addEventListener(
-  "keydown",
-  event => {
-
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
-
-      event.preventDefault();
-
-      sendMessage(promptInput.value);
-
-    }
-
-  }
-);
-
-// ==========================================
-// TEXTAREA AUTO HEIGHT
-// ==========================================
-
-promptInput.addEventListener(
-  "input",
-  () => {
-
-    promptInput.style.height = "auto";
-
-    promptInput.style.height =
-      Math.min(promptInput.scrollHeight, 140) + "px";
-
-  }
-);
-
-// ==========================================
-// SUGGESTED PROMPTS
-// ==========================================
-
-document.querySelectorAll(
-  ".suggestions button"
-).forEach(button => {
-
-  button.addEventListener(
-    "click",
-    () => {
-
-      sendMessage(button.dataset.prompt);
-
-    }
+  addCopyButton(
+    currentAssistantElement.body,
+    () => errorText
   );
 
+  setBusy(false);
+  setActivity("Ready");
+  activeRequestId = null;
+  scrollToBottom();
+}
+
+function finishAnswer(requestId, finalText) {
+  if (requestId !== activeRequestId) return;
+
+  const answer = (finalText || currentAssistantText).trim() ||
+    "I couldn't generate a response. Please try again.";
+
+  currentAssistantElement.content.textContent = answer;
+
+  addSources(currentAssistantElement.body, currentSources);
+
+  addCopyButton(
+    currentAssistantElement.body,
+    () => answer
+  );
+
+  chatMessages.push({
+    role: "assistant",
+    content: answer
+  });
+
+  saveMessages(chatMessages);
+
+  setBusy(false);
+  setActivity("Ready");
+  activeRequestId = null;
+  scrollToBottom();
+}
+
+// Worker communication
+worker.addEventListener("message", (event) => {
+  const data = event.data;
+
+  if (data.type === "status" || data.type === "progress") {
+    setModelStatus(data.text);
+    setActivity(data.text);
+    return;
+  }
+
+  if (data.type === "ready") {
+    setModelStatus("Model ready");
+    setActivity("Ready");
+    return;
+  }
+
+  if (data.type === "token") {
+    if (data.requestId !== activeRequestId) return;
+
+    if (!currentAssistantText) {
+      currentAssistantElement.content.textContent = "";
+    }
+
+    currentAssistantText += data.text;
+    currentAssistantElement.content.textContent = currentAssistantText;
+
+    scrollToBottom();
+    return;
+  }
+
+  if (data.type === "done") {
+    finishAnswer(data.requestId, data.text);
+    return;
+  }
+
+  if (data.type === "error") {
+    if (data.requestId !== undefined) {
+      finishWithError(data.requestId, data.text);
+    } else {
+      setModelStatus("Model error");
+      setActivity(data.text);
+    }
+  }
 });
 
-// ==========================================
-// SIDEBAR
-// ==========================================
-
-function openSidebar() {
-
-  sidebar.classList.add("open");
-
-  overlay.classList.add("show");
-
-}
-
-function closeSidebar() {
-
-  sidebar.classList.remove("open");
-
-  overlay.classList.remove("show");
-
-}
-
-$("menuBtn").addEventListener(
-  "click",
-  openSidebar
-);
-
-$("closeSidebar").addEventListener(
-  "click",
-  closeSidebar
-);
-
-overlay.addEventListener(
-  "click",
-  closeSidebar
-);
-
-// ==========================================
-// THEME
-// ==========================================
-
-const savedTheme =
-  localStorage.getItem("agm_theme");
-
-if (savedTheme === "light") {
-
-  document.body.classList.add("light");
-
-  $("themeBtn").textContent = "☾";
-
-}
-
-$("themeBtn").addEventListener(
-  "click",
-  () => {
-
-    document.body.classList.toggle("light");
-
-    const light =
-      document.body.classList.contains("light");
-
-    localStorage.setItem(
-      "agm_theme",
-      light ? "light" : "dark"
-    );
-
-    $("themeBtn").textContent =
-      light ? "☾" : "☼";
-
+worker.addEventListener("error", (event) => {
+  if (activeRequestId !== null) {
+    finishWithError(activeRequestId, event.message || "Worker crashed.");
+  } else {
+    setModelStatus("Worker error");
+    setActivity("AI worker failed to start.");
   }
-);
+});
 
-// ==========================================
-// STARTUP
-// ==========================================
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  sendMessage(input.value);
+});
 
-if (chats.length > 0) {
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 130) + "px";
+});
 
-  currentChat = chats[0].id;
+input.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    form.requestSubmit();
+  }
+});
 
-}
+// Suggestion cards
+document.querySelectorAll(".suggestion").forEach((button) => {
+  button.addEventListener("click", () => {
+    sendMessage(button.dataset.prompt || "");
+  });
+});
 
-renderHistory();
+// New chat
+$("newChat").addEventListener("click", () => {
+  if (busy) return;
 
-renderMessages();
+  chatMessages = [];
+  clearMemory();
 
-setStatus("Qwen AI · Not loaded");
+  messagesBox.innerHTML = "";
+  welcome.style.display = "";
+  setActivity("New conversation started");
 
-console.log(
-  "AGM AI v1.2 initialized successfully."
-);
+  $("sidebar").classList.remove("open");
+  $("mobileOverlay").classList.remove("active");
+});
+
+// Theme
+$("themeButton").addEventListener("click", () => {
+  document.body.classList.toggle("light");
+});
+
+// Mobile sidebar
+$("menuButton").addEventListener("click", () => {
+  $("sidebar").classList.toggle("open");
+  $("mobileOverlay").classList.toggle("active");
+});
+
+$("mobileOverlay").addEventListener("click", () => {
+  $("sidebar").classList.remove("open");
+  $("mobileOverlay").classList.remove("active");
+});
+
+// Restore previous chat
+renderSavedMessages();
+
+// Start model loading in background.
+// First model download may take a while.
+setModelStatus("Loading model...");
+setActivity("Preparing local AI...");
+
+worker.postMessage({ type: "load" });
