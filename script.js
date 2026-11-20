@@ -16,53 +16,59 @@ const form = $("chatForm");
 const input = $("messageInput");
 const sendButton = $("sendButton");
 
-const SYSTEM_PROMPT = `
-You are AGM AI, an AI assistant created by AGM Studio.
-
-IDENTITY:
-- Your name is AGM AI.
-- Never claim to be ChatGPT, Gemini, or another assistant.
-- Do not invent a human identity.
-
-BEHAVIOR:
-- Be helpful, clear, accurate and honest.
-- Answer in the language used by the user.
-- Avoid repeating the same phrases.
-- If you do not know something, say so.
-- Never invent sources, facts or search results.
-- Use the provided research information when available.
-- Clearly explain when information may be incomplete.
-- Do not claim to have browsed the internet unless research results were provided.
-- Keep answers reasonably concise unless detail is requested.
-`;
-
-let chatMessages = loadMessages();
-let busy = false;
-let currentAssistantElement = null;
-let currentAssistantText = "";
-let currentSources = [];
-let requestCounter = 0;
-let activeRequestId = null;
-
 const worker = new Worker(
   new URL("./ai-worker.js", import.meta.url),
   { type: "module" }
 );
 
-function setActivity(text) {
-  $("activityText").textContent = text;
-}
+const SYSTEM_PROMPT = `
+You are AGM AI, created by AGM Studio.
 
-function setModelStatus(text) {
+Your identity:
+- Your name is AGM AI.
+- Never claim to be another AI.
+- Never invent a human identity.
+
+Your behavior:
+- Answer in the user's language.
+- Be helpful, clear and honest.
+- Avoid unnecessary repetition.
+- Never invent facts or sources.
+- Use supplied web research when available.
+- Say when information is unavailable.
+- Do not claim to browse unless research results were supplied.
+`;
+
+let chatMessages = loadMessages();
+let busy = false;
+let requestCounter = 0;
+let activeRequestId = null;
+
+let assistantElement = null;
+let assistantText = "";
+let currentSources = [];
+
+function setStatus(text) {
   $("modelStatus").textContent = text;
   $("sideModelStatus").textContent = text;
 }
 
-function scrollToBottom() {
+function setActivity(text) {
+  $("activityText").textContent = text;
+}
+
+function scrollBottom() {
   chatArea.scrollTop = chatArea.scrollHeight;
 }
 
-function createMessageElement(role, text = "") {
+function setBusy(value) {
+  busy = value;
+  sendButton.disabled = value;
+  input.disabled = value;
+  sendButton.textContent = value ? "…" : "↑";
+}
+
+function createMessage(role, text = "") {
   const wrapper = document.createElement("div");
   wrapper.className = `message ${role}`;
 
@@ -83,14 +89,33 @@ function createMessageElement(role, text = "") {
 
   body.append(name, content);
   wrapper.append(avatar, body);
-
   messagesBox.appendChild(wrapper);
 
   return { wrapper, body, content };
 }
 
+function addCopyButton(body, getText) {
+  const actions = document.createElement("div");
+  actions.className = "message-actions";
+
+  const button = document.createElement("button");
+  button.textContent = "Copy answer";
+
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(getText());
+      button.textContent = "Copied!";
+    } catch {
+      button.textContent = "Copy unavailable";
+    }
+  });
+
+  actions.appendChild(button);
+  body.appendChild(actions);
+}
+
 function addSources(body, sources) {
-  if (!sources || !sources.length) return;
+  if (!sources.length) return;
 
   const container = document.createElement("div");
   container.className = "sources";
@@ -100,7 +125,7 @@ function addSources(body, sources) {
   heading.textContent = "Research sources";
   container.appendChild(heading);
 
-  sources.forEach((source) => {
+  for (const source of sources) {
     const link = document.createElement("a");
 
     link.className = "source-card";
@@ -116,66 +141,78 @@ function addSources(body, sources) {
 
     link.append(title, description);
     container.appendChild(link);
-  });
+  }
 
   body.appendChild(container);
 }
 
-function addCopyButton(body, getText) {
-  const actions = document.createElement("div");
-  actions.className = "message-actions";
-
-  const copy = document.createElement("button");
-  copy.textContent = "Copy answer";
-
-  copy.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(getText());
-      copy.textContent = "Copied!";
-      setTimeout(() => copy.textContent = "Copy answer", 1200);
-    } catch {
-      copy.textContent = "Copy unavailable";
-    }
-  });
-
-  actions.appendChild(copy);
-  body.appendChild(actions);
-}
-
-function showWelcomeIfNeeded() {
-  welcome.style.display = messagesBox.children.length ? "none" : "";
-}
-
-function renderSavedMessages() {
+function renderChat() {
   messagesBox.innerHTML = "";
 
   for (const message of chatMessages) {
-    const item = createMessageElement(message.role, message.content);
+    const item = createMessage(message.role, message.content);
 
     if (message.role === "assistant") {
       addCopyButton(item.body, () => message.content);
     }
   }
 
-  showWelcomeIfNeeded();
-  scrollToBottom();
+  welcome.style.display = chatMessages.length ? "none" : "";
+  scrollBottom();
 }
 
-function detectResearchIntent(text) {
-  return /\b(search the web|search online|research|latest|current|today|news|recent|2026|right now|who won|price today|weather today)\b/i.test(text);
+function needsResearch(text) {
+  return /\b(search the web|search online|research|latest|current|today|news|recent|right now|who won|price today|weather today)\b/i.test(text);
 }
 
-function getSearchQuery(text) {
-  return text
-    .replace(/^(please\s+)?(search|research|find)\s+(the\s+)?(web|internet|online)?\s*(for|about)?\s*/i, "")
-    .trim();
+function finishError(requestId, errorMessage) {
+  if (requestId !== activeRequestId) return;
+
+  const errorText =
+    "Sorry, AGM AI encountered an error: " +
+    errorMessage +
+    "\nPlease try again.";
+
+  assistantElement.content.textContent = errorText;
+
+  chatMessages.push({
+    role: "assistant",
+    content: errorText
+  });
+
+  saveMessages(chatMessages);
+  addCopyButton(assistantElement.body, () => errorText);
+
+  setBusy(false);
+  setActivity("Ready");
+  activeRequestId = null;
+
+  scrollBottom();
 }
 
-function setBusy(value) {
-  busy = value;
-  sendButton.disabled = value;
-  input.disabled = value;
-  sendButton.textContent = value ? "…" : "↑";
+function finishAnswer(requestId, text) {
+  if (requestId !== activeRequestId) return;
+
+  const answer = (text || assistantText).trim() ||
+    "I couldn't generate an answer. Please try again.";
+
+  assistantElement.content.textContent = answer;
+
+  addSources(assistantElement.body, currentSources);
+  addCopyButton(assistantElement.body, () => answer);
+
+  chatMessages.push({
+    role: "assistant",
+    content: answer
+  });
+
+  saveMessages(chatMessages);
+
+  setBusy(false);
+  setActivity("Ready");
+  activeRequestId = null;
+
+  scrollBottom();
 }
 
 async function sendMessage(rawText) {
@@ -185,7 +222,7 @@ async function sendMessage(rawText) {
 
   welcome.style.display = "none";
 
-  const userElement = createMessageElement("user", text);
+  createMessage("user", text);
 
   chatMessages.push({
     role: "user",
@@ -198,11 +235,10 @@ async function sendMessage(rawText) {
   input.style.height = "auto";
 
   setBusy(true);
-  setActivity("Preparing your request...");
+  setActivity("Preparing request...");
 
-  const assistant = createMessageElement("assistant", "Thinking...");
-  currentAssistantElement = assistant;
-  currentAssistantText = "";
+  assistantElement = createMessage("assistant", "Thinking...");
+  assistantText = "";
   currentSources = [];
 
   const requestId = ++requestCounter;
@@ -211,26 +247,22 @@ async function sendMessage(rawText) {
   try {
     let extraContext = "";
 
-    // Built-in tool routing
-    const toolResult = await runTool(text);
+    // Built-in tools
+    const tool = await runTool(text);
 
-    if (toolResult) {
+    if (tool) {
       extraContext +=
-        `\nTool result (${toolResult.type}): ${toolResult.result}\n`;
-
-      setActivity("Using " + toolResult.type + " tool...");
+        `\nTool result (${tool.type}): ${tool.result}\n`;
     }
 
-    // Web research routing
-    if (detectResearchIntent(text)) {
-      setActivity("Searching available web sources...");
+    // Web research
+    if (needsResearch(text)) {
+      setActivity("Searching the web...");
 
-      const query = getSearchQuery(text) || text;
-
-      currentSources = await researchWeb(query);
+      currentSources = await researchWeb(text);
 
       if (currentSources.length) {
-        extraContext += "\nWeb research results:\n";
+        extraContext += "\nResearch results:\n";
 
         currentSources.forEach((source, index) => {
           extraContext +=
@@ -238,33 +270,37 @@ async function sendMessage(rawText) {
             `URL: ${source.url}\n` +
             `Information: ${source.snippet}\n`;
         });
-
-        setActivity("Research complete. Generating answer...");
       } else {
         extraContext +=
-          "\nWeb research was attempted, but no usable results were returned. " +
-          "Be honest that live research was unsuccessful.\n";
-
-        setActivity("No web results found. Using local AI...");
+          "\nWeb search did not return usable results. " +
+          "Be honest about this limitation.\n";
       }
     }
 
-    const recentMessages = chatMessages.slice(-8);
+    // Keep context small to reduce memory pressure.
+    const recent = chatMessages.slice(-4).map((message) => ({
+      role: message.role,
+      content: String(message.content || "").slice(0, 450)
+    }));
+
+    // Attach tool/research context to the latest user message.
+    if (extraContext && recent.length) {
+      const last = recent[recent.length - 1];
+
+      last.content +=
+        "\n\nAdditional information:\n" +
+        extraContext.slice(0, 2500);
+    }
 
     const modelMessages = [
       {
         role: "system",
         content: SYSTEM_PROMPT
       },
-      ...recentMessages.slice(0, -1),
-      ...(extraContext ? [{
-        role: "system",
-        content: "Additional information for this request:\n" + extraContext
-      }] : []),
-      recentMessages[recentMessages.length - 1]
+      ...recent
     ];
 
-    setActivity("Generating answer with local AI...");
+    setActivity("Sending request to local AI...");
 
     worker.postMessage({
       type: "generate",
@@ -273,92 +309,31 @@ async function sendMessage(rawText) {
     });
 
   } catch (error) {
-    finishWithError(requestId, error.message);
+    finishError(requestId, error.message);
   }
 }
 
-function finishWithError(requestId, message) {
-  if (requestId !== activeRequestId) return;
-
-  const errorText =
-    "Sorry, something went wrong: " + message +
-    "\nPlease try again.";
-
-  currentAssistantElement.content.textContent = errorText;
-
-  chatMessages.push({
-    role: "assistant",
-    content: errorText
-  });
-
-  saveMessages(chatMessages);
-
-  addCopyButton(
-    currentAssistantElement.body,
-    () => errorText
-  );
-
-  setBusy(false);
-  setActivity("Ready");
-  activeRequestId = null;
-  scrollToBottom();
-}
-
-function finishAnswer(requestId, finalText) {
-  if (requestId !== activeRequestId) return;
-
-  const answer = (finalText || currentAssistantText).trim() ||
-    "I couldn't generate a response. Please try again.";
-
-  currentAssistantElement.content.textContent = answer;
-
-  addSources(currentAssistantElement.body, currentSources);
-
-  addCopyButton(
-    currentAssistantElement.body,
-    () => answer
-  );
-
-  chatMessages.push({
-    role: "assistant",
-    content: answer
-  });
-
-  saveMessages(chatMessages);
-
-  setBusy(false);
-  setActivity("Ready");
-  activeRequestId = null;
-  scrollToBottom();
-}
-
-// Worker communication
+// Worker messages
 worker.addEventListener("message", (event) => {
   const data = event.data;
 
   if (data.type === "status" || data.type === "progress") {
-    setModelStatus(data.text);
+    setStatus(data.text);
     setActivity(data.text);
-    return;
-  }
-
-  if (data.type === "ready") {
-    setModelStatus("Model ready");
-    setActivity("Ready");
     return;
   }
 
   if (data.type === "token") {
     if (data.requestId !== activeRequestId) return;
 
-    if (!currentAssistantText) {
-      currentAssistantElement.content.textContent = "";
+    if (!assistantText) {
+      assistantElement.content.textContent = "";
     }
 
-    currentAssistantText += data.text;
-    currentAssistantElement.content.textContent = currentAssistantText;
+    assistantText += data.text;
+    assistantElement.content.textContent = assistantText;
 
-    scrollToBottom();
+    scrollBottom();
     return;
   }
 
@@ -368,29 +343,29 @@ worker.addEventListener("message", (event) => {
   }
 
   if (data.type === "error") {
-    if (data.requestId !== undefined) {
-      finishWithError(data.requestId, data.text);
-    } else {
-      setModelStatus("Model error");
-      setActivity(data.text);
-    }
+    finishError(data.requestId, data.text);
   }
 });
 
 worker.addEventListener("error", (event) => {
   if (activeRequestId !== null) {
-    finishWithError(activeRequestId, event.message || "Worker crashed.");
+    finishError(
+      activeRequestId,
+      event.message || "AI worker stopped unexpectedly."
+    );
   } else {
-    setModelStatus("Worker error");
-    setActivity("AI worker failed to start.");
+    setStatus("Worker error");
+    setActivity("Could not start AI worker.");
   }
 });
 
+// Send message
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   sendMessage(input.value);
 });
 
+// Textarea resizing
 input.addEventListener("input", () => {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 130) + "px";
@@ -403,7 +378,7 @@ input.addEventListener("keydown", (event) => {
   }
 });
 
-// Suggestion cards
+// Suggestion buttons
 document.querySelectorAll(".suggestion").forEach((button) => {
   button.addEventListener("click", () => {
     sendMessage(button.dataset.prompt || "");
@@ -419,7 +394,8 @@ $("newChat").addEventListener("click", () => {
 
   messagesBox.innerHTML = "";
   welcome.style.display = "";
-  setActivity("New conversation started");
+
+  setActivity("New conversation");
 
   $("sidebar").classList.remove("open");
   $("mobileOverlay").classList.remove("active");
@@ -441,12 +417,8 @@ $("mobileOverlay").addEventListener("click", () => {
   $("mobileOverlay").classList.remove("active");
 });
 
-// Restore previous chat
-renderSavedMessages();
+// Restore chat without automatically loading the model.
+renderChat();
 
-// Start model loading in background.
-// First model download may take a while.
-setModelStatus("Loading model...");
-setActivity("Preparing local AI...");
-
-worker.postMessage({ type: "load" });
+setStatus("Not loaded");
+setActivity("Ready · Model loads when you send a message");
