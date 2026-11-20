@@ -1,255 +1,145 @@
 
-const MEMORY_KEY = "agm_ai_messages_v1";
+const STORAGE_KEY = "agm_ai_chats_v1";
 
-export function loadMessages() {
+export function getChats() {
   try {
-    return JSON.parse(localStorage.getItem(MEMORY_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
   } catch {
     return [];
   }
 }
 
-export function saveMessages(messages) {
-  try {
-    localStorage.setItem(MEMORY_KEY, JSON.stringify(messages.slice(-40)));
-  } catch (error) {
-    console.warn("Could not save chat:", error);
-  }
+export function saveChats(chats) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(chats.slice(0, 40)));
 }
 
-export function clearMemory() {
-  localStorage.removeItem(MEMORY_KEY);
+export function makeId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-/* Safe calculator: supports basic arithmetic without eval(). */
-function calculate(expression) {
-  const input = expression.replace(/\s+/g, "");
-
-  if (!/^[0-9+\-*/().%]+$/.test(input)) {
-    throw new Error("Unsupported calculation.");
-  }
-
-  let position = 0;
-
-  function parseExpression() {
-    let value = parseTerm();
-
-    while (input[position] === "+" || input[position] === "-") {
-      const operator = input[position++];
-      const right = parseTerm();
-      value = operator === "+" ? value + right : value - right;
-    }
-
-    return value;
-  }
-
-  function parseTerm() {
-    let value = parseFactor();
-
-    while (
-      input[position] === "*" ||
-      input[position] === "/" ||
-      input[position] === "%"
-    ) {
-      const operator = input[position++];
-      const right = parseFactor();
-
-      if ((operator === "/" || operator === "%") && right === 0) {
-        throw new Error("Cannot divide by zero.");
-      }
-
-      if (operator === "*") value *= right;
-      if (operator === "/") value /= right;
-      if (operator === "%") value %= right;
-    }
-
-    return value;
-  }
-
-  function parseFactor() {
-    if (input[position] === "+") {
-      position++;
-      return parseFactor();
-    }
-
-    if (input[position] === "-") {
-      position++;
-      return -parseFactor();
-    }
-
-    if (input[position] === "(") {
-      position++;
-      const value = parseExpression();
-
-      if (input[position] !== ")") {
-        throw new Error("Missing closing bracket.");
-      }
-
-      position++;
-      return value;
-    }
-
-    const start = position;
-
-    while (/[0-9.]/.test(input[position] || "")) position++;
-
-    if (start === position) throw new Error("Invalid number.");
-
-    const number = Number(input.slice(start, position));
-
-    if (!Number.isFinite(number)) throw new Error("Invalid number.");
-
-    return number;
-  }
-
-  const result = parseExpression();
-
-  if (position !== input.length || !Number.isFinite(result)) {
-    throw new Error("Invalid expression.");
-  }
-
-  return result;
+export function escapeHTML(value = "") {
+  return String(value).replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[char]);
 }
 
-export async function runTool(message) {
-  const text = message.trim();
-
-  const mathMatch = text.match(
-    /(?:calculate|compute|what is|solve)\s+(.+?)\??$/i
-  );
-
-  if (mathMatch && /^[0-9+\-*/().%\s]+$/.test(mathMatch[1])) {
-    try {
-      return {
-        type: "calculator",
-        result: `${mathMatch[1]} = ${calculate(mathMatch[1])}`
-      };
-    } catch (error) {
-      return { type: "calculator", result: error.message };
-    }
-  }
-
-  const plainMath = text.match(/^([0-9+\-*/().%\s]+)\s*=?\s*\??$/);
-
-  if (plainMath) {
-    try {
-      return {
-        type: "calculator",
-        result: `${plainMath[1].trim()} = ${calculate(plainMath[1])}`
-      };
-    } catch (error) {
-      return { type: "calculator", result: error.message };
-    }
-  }
-
-  if (/\b(current time|what time|date today|today's date|current date)\b/i.test(text)) {
-    return {
-      type: "datetime",
-      result: new Date().toLocaleString()
-    };
-  }
-
-  const conversion = text.match(
-    /(\d+(?:\.\d+)?)\s*(km|kilometers?)\s+(?:to|in)\s+(m|meters?)\b/i
-  );
-
-  if (conversion) {
-    const value = Number(conversion[1]) * 1000;
-    return {
-      type: "converter",
-      result: `${conversion[1]} km = ${value} meters`
-    };
-  }
-
-  return null;
+export function formatAnswer(text = "") {
+  let safe = escapeHTML(text);
+  safe = safe.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  safe = safe.replace(/\*(.*?)\*/g, "<em>$1</em>");
+  safe = safe.replace(/`([^`]+)`/g, "<code>$1</code>");
+  safe = safe.replace(/\n/g, "<br>");
+  return safe;
 }
 
-/* Web research using public endpoints. */
+export function isGreeting(text) {
+  const value = text.trim().toLowerCase().replace(/[!.?,]+$/g, "");
+  return /^(hi|hello|hey|heyy|yo|sup|good morning|good afternoon|good evening|assalamu alaikum|salam|thanks|thank you|who are you|what are you)$/.test(value);
+}
+
+export function greetingReply(text) {
+  const value = text.trim().toLowerCase();
+  if (/assalamu alaikum|salam/.test(value)) {
+    return "Wa alaikum assalam! 👋 I'm AGM AI. What would you like to talk about?";
+  }
+  if (/thank/.test(value)) return "You're welcome! 😊 What else can I help with?";
+  if (/who are you|what are you/.test(value)) {
+    return "I'm AGM AI, built by AGM Studio. I can chat with you and look up information from the web.";
+  }
+  if (/good morning/.test(value)) return "Good morning! ☀️ What are we exploring today?";
+  if (/good afternoon/.test(value)) return "Good afternoon! What can I help you with?";
+  if (/good evening/.test(value)) return "Good evening! How can I help today?";
+  return "Hey! 👋 I'm AGM AI. What's on your mind?";
+}
+
+function cleanText(value) {
+  return String(value || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function fetchJSON(url) {
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error("Search service unavailable");
+  return response.json();
+}
+
 export async function researchWeb(query) {
-  const cleanQuery = query.trim();
-
-  if (!cleanQuery) return [];
-
+  const encoded = encodeURIComponent(query);
   const results = [];
-  const seen = new Set();
 
-  function addResult(item) {
-    if (!item.title || !item.url || !item.snippet) return;
-
-    if (seen.has(item.url)) return;
-
-    seen.add(item.url);
-    results.push(item);
-  }
-
-  // DuckDuckGo Instant Answer API
+  // DuckDuckGo Instant Answer
   try {
-    const url =
-      "https://api.duckduckgo.com/?q=" +
-      encodeURIComponent(cleanQuery) +
-      "&format=json&no_html=1&skip_disambig=1";
-
-    const response = await fetch(url);
-
-    if (response.ok) {
-      const data = await response.json();
-
-      if (data.AbstractText && data.AbstractURL) {
-        addResult({
-          title: data.Heading || cleanQuery,
-          url: data.AbstractURL,
-          snippet: data.AbstractText
+    const data = await fetchJSON(
+      `https://api.duckduckgo.com/?q=${encoded}&format=json&no_html=1&skip_disambig=1`
+    );
+    if (data.AbstractText) {
+      results.push({
+        title: cleanText(data.Heading || "DuckDuckGo summary"),
+        text: cleanText(data.AbstractText),
+        url: data.AbstractURL || "https://duckduckgo.com/"
+      });
+    }
+    for (const item of (data.RelatedTopics || [])) {
+      if (item.Text && item.FirstURL) {
+        results.push({
+          title: cleanText(item.Text.split(" - ")[0]),
+          text: cleanText(item.Text),
+          url: item.FirstURL
         });
       }
-
-      if (data.RelatedTopics) {
-        for (const topic of data.RelatedTopics) {
-          if (topic.Text && topic.FirstURL) {
-            addResult({
-              title: topic.Text.slice(0, 90),
-              url: topic.FirstURL,
-              snippet: topic.Text
+      if (item.Topics) {
+        for (const sub of item.Topics) {
+          if (sub.Text && sub.FirstURL) {
+            results.push({
+              title: cleanText(sub.Text.split(" - ")[0]),
+              text: cleanText(sub.Text),
+              url: sub.FirstURL
             });
           }
-
-          if (results.length >= 4) break;
         }
       }
+      if (results.length >= 5) break;
     }
   } catch (error) {
-    console.warn("DuckDuckGo search unavailable:", error);
+    console.warn("DuckDuckGo lookup failed:", error);
   }
 
-  // Wikipedia search fallback / additional results
+  // Wikipedia search fallback / additional source
   try {
-    const url =
-      "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=" +
-      encodeURIComponent(cleanQuery) +
-      "&format=json&origin=*&srlimit=5";
-
-    const response = await fetch(url);
-
-    if (response.ok) {
-      const data = await response.json();
-      const pages = data.query?.search || [];
-
-      for (const page of pages) {
-        const title = page.title;
-
-        addResult({
-          title,
-          url: "https://en.wikipedia.org/wiki/" +
-            encodeURIComponent(title.replace(/ /g, "_")),
-          snippet: page.snippet
-            .replace(/<[^>]*>/g, "")
-            .replace(/&quot;/g, '"')
-            .replace(/&#039;/g, "'")
+    const data = await fetchJSON(
+      `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encoded}&format=json&origin=*`
+    );
+    for (const item of (data.query?.search || []).slice(0, 4)) {
+      const title = item.title;
+      const page = await fetchJSON(
+        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`
+      );
+      if (page.extract) {
+        results.push({
+          title: page.title || title,
+          text: cleanText(page.extract),
+          url: page.content_urls?.desktop?.page ||
+            `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`
         });
       }
     }
   } catch (error) {
-    console.warn("Wikipedia search unavailable:", error);
+    console.warn("Wikipedia lookup failed:", error);
   }
 
-  return results.slice(0, 6);
+  const unique = [];
+  const seen = new Set();
+  for (const item of results) {
+    if (!item.text || seen.has(item.url)) continue;
+    seen.add(item.url);
+    unique.push(item);
+  }
+  return unique.slice(0, 6);
+}
+
+export function needsResearch(text) {
+  const value = text.toLowerCase().trim();
+  if (isGreeting(value)) return false;
+
+  // Treat factual questions, explanations, named topics and current info as research.
+  return true;
 }
