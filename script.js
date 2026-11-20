@@ -1,374 +1,420 @@
 
 import {
-  loadMessages,
-  saveMessages,
-  clearMemory,
-  runTool,
+  getChats,
+  saveChats,
+  makeId,
+  formatAnswer,
+  isGreeting,
+  greetingReply,
+  needsResearch,
   researchWeb
 } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
 
-const chatArea = $("chatArea");
-const messagesBox = $("messages");
-const welcome = $("welcome");
 const form = $("chatForm");
 const input = $("messageInput");
+const messagesBox = $("messages");
+const welcome = $("welcome");
+const statusLine = $("statusLine");
 const sendButton = $("sendButton");
+const historyList = $("historyList");
 
-const worker = new Worker(
-  new URL("./ai-worker.js", import.meta.url),
-  { type: "module" }
-);
+let chats = getChats();
+let currentChatId = null;
+let currentMessages = [];
+let isBusy = false;
+let worker = null;
+let activeRequest = null;
 
-const SYSTEM_PROMPT = `
-You are AGM AI, created by AGM Studio.
+function getWorker() {
+  if (!worker) {
+    worker = new Worker("./ai-worker.js", {
+      type: "module"
+    });
 
-Your identity:
-- Your name is AGM AI.
-- Never claim to be another AI.
-- Never invent a human identity.
+    worker.addEventListener("message", onWorkerMessage);
 
-Your behavior:
-- Answer in the user's language.
-- Be helpful, clear and honest.
-- Avoid unnecessary repetition.
-- Never invent facts or sources.
-- Use supplied web research when available.
-- Say when information is unavailable.
-- Do not claim to browse unless research results were supplied.
-`;
+    worker.addEventListener("error", () => {
+      setStatus("Local AI worker stopped. Please try again.");
+      finishRequest();
+    });
+  }
 
-let chatMessages = loadMessages();
-let busy = false;
-let requestCounter = 0;
-let activeRequestId = null;
-
-let assistantElement = null;
-let assistantText = "";
-let currentSources = [];
+  return worker;
+}
 
 function setStatus(text) {
-  $("modelStatus").textContent = text;
-  $("sideModelStatus").textContent = text;
-}
-
-function setActivity(text) {
-  $("activityText").textContent = text;
-}
-
-function scrollBottom() {
-  chatArea.scrollTop = chatArea.scrollHeight;
+  statusLine.textContent = text;
 }
 
 function setBusy(value) {
-  busy = value;
+  isBusy = value;
   sendButton.disabled = value;
   input.disabled = value;
   sendButton.textContent = value ? "…" : "↑";
 }
 
-function createMessage(role, text = "") {
+function scrollBottom() {
+  const area = $("chatArea");
+  area.scrollTop = area.scrollHeight;
+}
+
+function showWelcome(show) {
+  welcome.style.display = show ? "block" : "none";
+}
+
+function addMessage(role, text, sources = []) {
+  showWelcome(false);
+
   const wrapper = document.createElement("div");
   wrapper.className = `message ${role}`;
 
-  const avatar = document.createElement("div");
-  avatar.className = "message-avatar";
-  avatar.textContent = role === "user" ? "U" : "A";
+  if (role === "assistant") {
+    const icon = document.createElement("div");
+    icon.className = "message-icon";
+    icon.textContent = "A";
+    wrapper.appendChild(icon);
+  }
 
-  const body = document.createElement("div");
-  body.className = "message-body";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.innerHTML = formatAnswer(text);
 
-  const name = document.createElement("div");
-  name.className = "message-name";
-  name.textContent = role === "user" ? "You" : "AGM AI";
+  if (sources.length) {
+    const sourceBox = document.createElement("div");
+    sourceBox.className = "source-list";
 
-  const content = document.createElement("div");
-  content.className = "message-content";
-  content.textContent = text;
+    const heading = document.createElement("strong");
+    heading.textContent = "WEB SOURCES";
+    sourceBox.appendChild(heading);
 
-  body.append(name, content);
-  wrapper.append(avatar, body);
+    sources.forEach((source, index) => {
+      const link = document.createElement("a");
+      link.href = source.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `${index + 1}. ${source.title}`;
+      sourceBox.appendChild(link);
+    });
+
+    bubble.appendChild(sourceBox);
+  }
+
+  wrapper.appendChild(bubble);
   messagesBox.appendChild(wrapper);
+  scrollBottom();
 
-  return { wrapper, body, content };
+  return bubble;
 }
 
-function addCopyButton(body, getText) {
-  const actions = document.createElement("div");
-  actions.className = "message-actions";
+function addTyping() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "message assistant";
+  wrapper.id = "typingMessage";
 
-  const button = document.createElement("button");
-  button.textContent = "Copy answer";
+  const icon = document.createElement("div");
+  icon.className = "message-icon";
+  icon.textContent = "A";
 
-  button.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(getText());
-      button.textContent = "Copied!";
-    } catch {
-      button.textContent = "Copy unavailable";
-    }
+  const bubble = document.createElement("div");
+  bubble.className = "bubble typing";
+  bubble.textContent = "Thinking...";
+
+  wrapper.append(icon, bubble);
+  messagesBox.appendChild(wrapper);
+  scrollBottom();
+
+  return bubble;
+}
+
+function updateHistory() {
+  historyList.innerHTML = "";
+
+  [...chats].reverse().forEach(chat => {
+    const button = document.createElement("button");
+    button.className = "history-item";
+    button.textContent = chat.title || "New chat";
+
+    button.addEventListener("click", () => {
+      openChat(chat.id);
+    });
+
+    historyList.appendChild(button);
   });
-
-  actions.appendChild(button);
-  body.appendChild(actions);
 }
 
-function addSources(body, sources) {
-  if (!sources.length) return;
+function persistCurrentChat() {
+  if (!currentChatId || !currentMessages.length) return;
 
-  const container = document.createElement("div");
-  container.className = "sources";
+  const existingIndex = chats.findIndex(
+    chat => chat.id === currentChatId
+  );
 
-  const heading = document.createElement("div");
-  heading.className = "message-name";
-  heading.textContent = "Research sources";
-  container.appendChild(heading);
+  const chat = {
+    id: currentChatId,
+    title:
+      currentMessages.find(m => m.role === "user")
+        ?.content?.slice(0, 42) || "New chat",
+    messages: currentMessages,
+    updatedAt: Date.now()
+  };
 
-  for (const source of sources) {
-    const link = document.createElement("a");
-
-    link.className = "source-card";
-    link.href = source.url;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-
-    const title = document.createElement("strong");
-    title.textContent = source.title;
-
-    const description = document.createElement("small");
-    description.textContent = source.snippet;
-
-    link.append(title, description);
-    container.appendChild(link);
+  if (existingIndex >= 0) {
+    chats[existingIndex] = chat;
+  } else {
+    chats.push(chat);
   }
 
-  body.appendChild(container);
+  chats.sort((a, b) => b.updatedAt - a.updatedAt);
+  chats = chats.slice(0, 40);
+
+  saveChats(chats);
+  updateHistory();
 }
 
-function renderChat() {
+function openChat(id) {
+  const chat = chats.find(item => item.id === id);
+  if (!chat) return;
+
+  currentChatId = chat.id;
+  currentMessages = [...chat.messages];
+
   messagesBox.innerHTML = "";
+  showWelcome(false);
 
-  for (const message of chatMessages) {
-    const item = createMessage(message.role, message.content);
+  currentMessages.forEach(message => {
+    addMessage(
+      message.role,
+      message.content,
+      message.sources || []
+    );
+  });
 
-    if (message.role === "assistant") {
-      addCopyButton(item.body, () => message.content);
-    }
+  $("sidebar").classList.remove("open");
+}
+
+function newChat() {
+  currentChatId = makeId();
+  currentMessages = [];
+
+  messagesBox.innerHTML = "";
+  showWelcome(true);
+
+  setStatus("Ready when you are.");
+  $("sidebar").classList.remove("open");
+}
+
+function finishRequest() {
+  $("typingMessage")?.remove();
+  setBusy(false);
+  activeRequest = null;
+}
+
+function addAssistantReply(text, sources = []) {
+  const reply = text.trim() ||
+    "I couldn't generate a reply. Please try again.";
+
+  addMessage("assistant", reply, sources);
+
+  currentMessages.push({
+    role: "assistant",
+    content: reply,
+    sources
+  });
+
+  persistCurrentChat();
+}
+
+function isCasualChat(text) {
+  const value = text.toLowerCase().trim();
+
+  return (
+    isGreeting(value) ||
+    /^(tell me a joke|make me laugh|say something funny|how are you|what's up|whats up|are you there|let's chat|lets chat|talk to me)\??$/.test(value)
+  );
+}
+
+async function handleMessage(text) {
+  if (isBusy) return;
+
+  const clean = text.trim();
+  if (!clean) return;
+
+  if (!currentChatId) {
+    currentChatId = makeId();
   }
-
-  welcome.style.display = chatMessages.length ? "none" : "";
-  scrollBottom();
-}
-
-function needsResearch(text) {
-  return /\b(search the web|search online|research|latest|current|today|news|recent|right now|who won|price today|weather today)\b/i.test(text);
-}
-
-function finishError(requestId, errorMessage) {
-  if (requestId !== activeRequestId) return;
-
-  const errorText =
-    "Sorry, AGM AI encountered an error: " +
-    errorMessage +
-    "\nPlease try again.";
-
-  assistantElement.content.textContent = errorText;
-
-  chatMessages.push({
-    role: "assistant",
-    content: errorText
-  });
-
-  saveMessages(chatMessages);
-  addCopyButton(assistantElement.body, () => errorText);
-
-  setBusy(false);
-  setActivity("Ready");
-  activeRequestId = null;
-
-  scrollBottom();
-}
-
-function finishAnswer(requestId, text) {
-  if (requestId !== activeRequestId) return;
-
-  const answer = (text || assistantText).trim() ||
-    "I couldn't generate an answer. Please try again.";
-
-  assistantElement.content.textContent = answer;
-
-  addSources(assistantElement.body, currentSources);
-  addCopyButton(assistantElement.body, () => answer);
-
-  chatMessages.push({
-    role: "assistant",
-    content: answer
-  });
-
-  saveMessages(chatMessages);
-
-  setBusy(false);
-  setActivity("Ready");
-  activeRequestId = null;
-
-  scrollBottom();
-}
-
-async function sendMessage(rawText) {
-  const text = rawText.trim();
-
-  if (!text || busy) return;
-
-  welcome.style.display = "none";
-
-  createMessage("user", text);
-
-  chatMessages.push({
-    role: "user",
-    content: text
-  });
-
-  saveMessages(chatMessages);
-
-  input.value = "";
-  input.style.height = "auto";
 
   setBusy(true);
-  setActivity("Preparing request...");
 
-  assistantElement = createMessage("assistant", "Thinking...");
-  assistantText = "";
-  currentSources = [];
+  addMessage("user", clean);
 
-  const requestId = ++requestCounter;
-  activeRequestId = requestId;
+  currentMessages.push({
+    role: "user",
+    content: clean
+  });
+
+  persistCurrentChat();
+
+  const typingBubble = addTyping();
 
   try {
-    let extraContext = "";
+    if (isGreeting(clean)) {
+      setStatus("AGM greeting engine");
 
-    // Built-in tools
-    const tool = await runTool(text);
+      removeTyping();
 
-    if (tool) {
-      extraContext +=
-        `\nTool result (${tool.type}): ${tool.result}\n`;
+      addAssistantReply(greetingReply(clean));
+
+      setStatus("Ready when you are.");
+      return;
     }
 
-    // Web research
-    if (needsResearch(text)) {
-      setActivity("Searching the web...");
+    if (needsResearch(clean) && !isCasualChat(clean)) {
+      setStatus("Researching the web...");
+      typingBubble.textContent =
+        "Searching available web sources...";
 
-      currentSources = await researchWeb(text);
+      const results = await researchWeb(clean);
 
-      if (currentSources.length) {
-        extraContext += "\nResearch results:\n";
+      removeTyping();
 
-        currentSources.forEach((source, index) => {
-          extraContext +=
-            `\n${index + 1}. ${source.title}\n` +
-            `URL: ${source.url}\n` +
-            `Information: ${source.snippet}\n`;
-        });
-      } else {
-        extraContext +=
-          "\nWeb search did not return usable results. " +
-          "Be honest about this limitation.\n";
+      if (!results.length) {
+        addAssistantReply(
+          "I couldn't retrieve reliable results for that question right now. Public search services may be unavailable or may not support this query. Please try again later."
+        );
+
+        setStatus("Research unavailable.");
+        return;
       }
+
+      const summary = results
+        .map((item, index) =>
+          `${index + 1}. **${item.title}**\n${item.text}`
+        )
+        .join("\n\n");
+
+      const answer =
+        "I found these web results:\n\n" +
+        summary +
+        "\n\nThis is a source-based lookup, not a fully verified report. Check the links below for details.";
+
+      addAssistantReply(answer, results);
+
+      setStatus(`Found ${results.length} source result(s).`);
+      return;
     }
 
-    // Keep context small to reduce memory pressure.
-    const recent = chatMessages.slice(-4).map((message) => ({
-      role: message.role,
-      content: String(message.content || "").slice(0, 450)
-    }));
+    setStatus("Starting local AI...");
+    typingBubble.textContent =
+      "Loading local AI if needed...";
 
-    // Attach tool/research context to the latest user message.
-    if (extraContext && recent.length) {
-      const last = recent[recent.length - 1];
+    const requestId = makeId();
 
-      last.content +=
-        "\n\nAdditional information:\n" +
-        extraContext.slice(0, 2500);
-    }
+    activeRequest = {
+      id: requestId,
+      bubble: typingBubble,
+      text: ""
+    };
 
-    const modelMessages = [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT
-      },
-      ...recent
-    ];
+    const recentMessages = currentMessages
+      .slice(-6)
+      .map(message => ({
+        role: message.role,
+        content: message.content.slice(0, 500)
+      }));
 
-    setActivity("Sending request to local AI...");
-
-    worker.postMessage({
+    getWorker().postMessage({
       type: "generate",
       requestId,
-      messages: modelMessages
+      messages: recentMessages
     });
 
   } catch (error) {
-    finishError(requestId, error.message);
+    console.error(error);
+
+    removeTyping();
+
+    addAssistantReply(
+      "Something went wrong while processing that request. Please try again."
+    );
+
+    setStatus("An error occurred.");
+
+  } finally {
+    if (!activeRequest) {
+      setBusy(false);
+    }
   }
 }
 
-// Worker messages
-worker.addEventListener("message", (event) => {
+function removeTyping() {
+  $("typingMessage")?.remove();
+}
+
+function onWorkerMessage(event) {
   const data = event.data;
 
   if (data.type === "status" || data.type === "progress") {
     setStatus(data.text);
-    setActivity(data.text);
+
+    if (activeRequest) {
+      activeRequest.bubble.textContent = data.text;
+    }
+
+    return;
+  }
+
+  if (!activeRequest || data.requestId !== activeRequest.id) {
     return;
   }
 
   if (data.type === "token") {
-    if (data.requestId !== activeRequestId) return;
-
-    if (!assistantText) {
-      assistantElement.content.textContent = "";
-    }
-
-    assistantText += data.text;
-    assistantElement.content.textContent = assistantText;
-
+    activeRequest.text += data.text;
+    activeRequest.bubble.textContent = activeRequest.text;
     scrollBottom();
-    return;
   }
 
   if (data.type === "done") {
-    finishAnswer(data.requestId, data.text);
-    return;
+    const answer = data.text || activeRequest.text;
+
+    removeTyping();
+    addAssistantReply(answer);
+
+    finishRequest();
+    setStatus("Ready when you are.");
   }
 
   if (data.type === "error") {
-    finishError(data.requestId, data.text);
-  }
-});
+    console.error("AGM local model:", data.text);
 
-worker.addEventListener("error", (event) => {
-  if (activeRequestId !== null) {
-    finishError(
-      activeRequestId,
-      event.message || "AI worker stopped unexpectedly."
+    removeTyping();
+
+    addAssistantReply(
+      "The local AI couldn't generate a reply. Your browser may have run out of memory, or the model download may have failed. Try reloading the page and sending a shorter message."
     );
-  } else {
-    setStatus("Worker error");
-    setActivity("Could not start AI worker.");
-  }
-});
 
-// Send message
+    finishRequest();
+    setStatus("Local AI error.");
+  }
+}
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  sendMessage(input.value);
+
+  const text = input.value;
+
+  input.value = "";
+  input.style.height = "auto";
+
+  handleMessage(text);
 });
 
-// Textarea resizing
 input.addEventListener("input", () => {
   input.style.height = "auto";
-  input.style.height = Math.min(input.scrollHeight, 130) + "px";
+
+  input.style.height =
+    `${Math.min(input.scrollHeight, 130)}px`;
 });
 
 input.addEventListener("keydown", (event) => {
@@ -378,47 +424,43 @@ input.addEventListener("keydown", (event) => {
   }
 });
 
-// Suggestion buttons
-document.querySelectorAll(".suggestion").forEach((button) => {
+$("newChat").addEventListener("click", newChat);
+
+$("clearHistory").addEventListener("click", () => {
+  if (!confirm("Delete all saved AGM AI chats from this browser?")) {
+    return;
+  }
+
+  chats = [];
+  saveChats(chats);
+  updateHistory();
+  newChat();
+});
+
+$("menuButton").addEventListener("click", () => {
+  $("sidebar").classList.toggle("open");
+});
+
+$("themeButton").addEventListener("click", () => {
+  document.body.classList.toggle("light");
+
+  localStorage.setItem(
+    "agm_ai_theme",
+    document.body.classList.contains("light")
+      ? "light"
+      : "dark"
+  );
+});
+
+document.querySelectorAll(".suggestion").forEach(button => {
   button.addEventListener("click", () => {
-    sendMessage(button.dataset.prompt || "");
+    handleMessage(button.dataset.prompt || "");
   });
 });
 
-// New chat
-$("newChat").addEventListener("click", () => {
-  if (busy) return;
+if (localStorage.getItem("agm_ai_theme") === "light") {
+  document.body.classList.add("light");
+}
 
-  chatMessages = [];
-  clearMemory();
-
-  messagesBox.innerHTML = "";
-  welcome.style.display = "";
-
-  setActivity("New conversation");
-
-  $("sidebar").classList.remove("open");
-  $("mobileOverlay").classList.remove("active");
-});
-
-// Theme
-$("themeButton").addEventListener("click", () => {
-  document.body.classList.toggle("light");
-});
-
-// Mobile sidebar
-$("menuButton").addEventListener("click", () => {
-  $("sidebar").classList.toggle("open");
-  $("mobileOverlay").classList.toggle("active");
-});
-
-$("mobileOverlay").addEventListener("click", () => {
-  $("sidebar").classList.remove("open");
-  $("mobileOverlay").classList.remove("active");
-});
-
-// Restore chat without automatically loading the model.
-renderChat();
-
-setStatus("Not loaded");
-setActivity("Ready · Model loads when you send a message");
+updateHistory();
+newChat();
