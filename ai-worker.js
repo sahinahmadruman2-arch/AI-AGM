@@ -10,50 +10,47 @@ const MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
 
+// Conservative WASM thread setting
+env.backends.onnx.wasm.numThreads = 1;
+
 let generator = null;
 let loadingPromise = null;
 let busy = false;
 
+function sendStatus(text) {
+  self.postMessage({ type: "status", text });
+}
+
 async function loadModel() {
   if (generator) return generator;
-
   if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
-    postMessage({
-      type: "status",
-      text: "Downloading and loading local AI model..."
-    });
+    sendStatus("Loading local AI model...");
 
-    generator = await pipeline("text-generation", MODEL_ID, {
-      dtype: "q4",
-      progress_callback: (progress) => {
-        if (progress.status === "progress") {
-          const percent = Math.round(progress.progress || 0);
-
-          postMessage({
-            type: "progress",
-            text: `Loading model: ${percent}%`
-          });
-        } else if (progress.status === "downloading") {
-          postMessage({
-            type: "progress",
-            text: "Downloading model files..."
-          });
-        } else if (progress.status === "done") {
-          postMessage({
-            type: "progress",
-            text: "Model file ready..."
-          });
+    const model = await pipeline(
+      "text-generation",
+      MODEL_ID,
+      {
+        dtype: "q4",
+        progress_callback: (progress) => {
+          if (progress.status === "progress") {
+            self.postMessage({
+              type: "progress",
+              text: `Downloading model: ${Math.round(progress.progress || 0)}%`
+            });
+          } else if (progress.status === "downloading") {
+            sendStatus("Downloading model files...");
+          } else if (progress.status === "done") {
+            sendStatus("Preparing model...");
+          }
         }
       }
-    });
+    );
 
-    postMessage({
-      type: "ready",
-      text: "Local AI ready"
-    });
+    generator = model;
 
+    sendStatus("Local AI ready");
     return generator;
   })();
 
@@ -69,38 +66,31 @@ async function loadModel() {
 self.addEventListener("message", async (event) => {
   const data = event.data;
 
-  if (data.type === "load") {
-    try {
-      await loadModel();
-    } catch (error) {
-      postMessage({
-        type: "error",
-        text: "Model loading failed: " + error.message
-      });
-    }
-    return;
-  }
-
-  if (data.type !== "generate" || busy) return;
+  if (data.type !== "generate") return;
+  if (busy) return;
 
   busy = true;
 
   const requestId = data.requestId;
-  let streamedText = "";
+  let answer = "";
 
   try {
+    sendStatus("Preparing AI...");
+
     const model = await loadModel();
 
-    const messages = data.messages;
+    sendStatus("Generating answer...");
 
     const streamer = new TextStreamer(model.tokenizer, {
       skip_prompt: true,
+      skip_special_tokens: true,
+
       callback_function: (chunk) => {
         if (!chunk) return;
 
-        streamedText += chunk;
+        answer += chunk;
 
-        postMessage({
+        self.postMessage({
           type: "token",
           requestId,
           text: chunk
@@ -108,26 +98,26 @@ self.addEventListener("message", async (event) => {
       }
     });
 
-    await model(messages, {
-      max_new_tokens: 160,
-      temperature: 0.7,
-      do_sample: true,
+    await model(data.messages, {
+      max_new_tokens: 64,
+      do_sample: false,
       repetition_penalty: 1.1,
       streamer
     });
 
-    postMessage({
+    self.postMessage({
       type: "done",
       requestId,
-      text: streamedText.trim()
+      text: answer.trim()
     });
 
   } catch (error) {
-    postMessage({
+    self.postMessage({
       type: "error",
       requestId,
-      text: error.message || "Unknown AI error"
+      text: error?.message || "AI generation failed."
     });
+
   } finally {
     busy = false;
   }
