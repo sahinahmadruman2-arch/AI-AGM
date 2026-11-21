@@ -35,8 +35,9 @@ function getWorker() {
 
     worker.addEventListener("message", onWorkerMessage);
 
-    worker.addEventListener("error", () => {
-      setStatus("Local AI worker stopped. Please try again.");
+    worker.addEventListener("error", (error) => {
+      console.error(error);
+      setStatus("AI worker stopped.");
       finishRequest();
     });
   }
@@ -86,15 +87,18 @@ function addMessage(role, text, sources = []) {
     sourceBox.className = "source-list";
 
     const heading = document.createElement("strong");
-    heading.textContent = "WEB SOURCES";
+    heading.textContent = "SOURCES";
     sourceBox.appendChild(heading);
 
     sources.forEach((source, index) => {
+      if (!source.url) return;
+
       const link = document.createElement("a");
       link.href = source.url;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      link.textContent = `${index + 1}. ${source.title}`;
+      link.textContent = `${index + 1}. ${source.title || "Source"}`;
+
       sourceBox.appendChild(link);
     });
 
@@ -103,6 +107,7 @@ function addMessage(role, text, sources = []) {
 
   wrapper.appendChild(bubble);
   messagesBox.appendChild(wrapper);
+
   scrollBottom();
 
   return bubble;
@@ -123,9 +128,14 @@ function addTyping() {
 
   wrapper.append(icon, bubble);
   messagesBox.appendChild(wrapper);
+
   scrollBottom();
 
   return bubble;
+}
+
+function removeTyping() {
+  $("typingMessage")?.remove();
 }
 
 function updateHistory() {
@@ -206,12 +216,12 @@ function newChat() {
 }
 
 function finishRequest() {
-  $("typingMessage")?.remove();
+  removeTyping();
   setBusy(false);
   activeRequest = null;
 }
 
-function addAssistantReply(text, sources = []) {
+function addAssistantReply(text, sources = [], mode = "normal") {
   const reply = text.trim() ||
     "I couldn't generate a reply. Please try again.";
 
@@ -220,7 +230,8 @@ function addAssistantReply(text, sources = []) {
   currentMessages.push({
     role: "assistant",
     content: reply,
-    sources
+    sources,
+    mode
   });
 
   persistCurrentChat();
@@ -231,8 +242,59 @@ function isCasualChat(text) {
 
   return (
     isGreeting(value) ||
-    /^(tell me a joke|make me laugh|say something funny|how are you|what's up|whats up|are you there|let's chat|lets chat|talk to me)\??$/.test(value)
+    /^(how are you|how r u|what's up|whats up|are you there|let's chat|lets chat|talk to me|tell me a joke|make me laugh|say something funny|thanks|thank you)[.!? ]*$/.test(value)
   );
+}
+
+function isDeepResearch(text) {
+  const value = text.toLowerCase();
+
+  return /deep research|research deeply|in detail|detailed explanation|explain deeply|full explanation|comprehensive|compare in detail|how does .* work|how .* works|why does .* happen|complete guide|step by step/i.test(value);
+}
+
+function buildResearchPrompt(question, results, deep) {
+  const sourceText = results.slice(0, deep ? 7 : 4)
+    .map((item, index) => {
+      return (
+        `[${index + 1}] ${item.title || "Untitled"}\n` +
+        `URL: ${item.url || "Unavailable"}\n` +
+        `${String(item.text || "").slice(0, deep ? 850 : 500)}`
+      );
+    })
+    .join("\n\n");
+
+  return {
+    role: "user",
+    content:
+      `Question: ${question}\n\n` +
+      `Research mode: ${deep ? "DEEP" : "QUICK"}\n\n` +
+      `Available web sources:\n${sourceText}\n\n` +
+      `Write the answer directly. ` +
+      `For a simple question, answer briefly. ` +
+      `For deep research, explain the topic in sections, compare ` +
+      `the available evidence, and mention what is uncertain. ` +
+      `Use [1], [2] etc. to refer to the supplied sources. ` +
+      `Do not claim to have checked anything that is not in these sources.`
+  };
+}
+
+function startModel(model, messages, mode, sources = []) {
+  const requestId = makeId();
+
+  activeRequest = {
+    id: requestId,
+    text: "",
+    sources,
+    mode
+  };
+
+  getWorker().postMessage({
+    type: "generate",
+    requestId,
+    model,
+    mode,
+    messages
+  });
 }
 
 async function handleMessage(text) {
@@ -259,76 +321,80 @@ async function handleMessage(text) {
   const typingBubble = addTyping();
 
   try {
-    if (isGreeting(clean)) {
-      setStatus("AGM greeting engine");
+    // 1. GREETING MODEL
+    if (isCasualChat(clean)) {
+      setStatus("Greeting AI loading...");
+      typingBubble.textContent = "Preparing a quick reply...";
 
-      removeTyping();
+      const recentMessages = currentMessages
+        .filter(m => !m.mode)
+        .slice(-4)
+        .map(m => ({
+          role: m.role,
+          content: m.content.slice(0, 250)
+        }));
 
-      addAssistantReply(greetingReply(clean));
-
-      setStatus("Ready when you are.");
+      startModel("greeting", recentMessages, "greeting");
       return;
     }
 
-    if (needsResearch(clean) && !isCasualChat(clean)) {
-      setStatus("Researching the web...");
-      typingBubble.textContent =
-        "Searching available web sources...";
+    // 2. WEB RESEARCH
+    if (needsResearch(clean)) {
+      const deep = isDeepResearch(clean);
+
+      setStatus(deep ? "Deep research..." : "Searching the web...");
+      typingBubble.textContent = deep
+        ? "Reading available sources..."
+        : "Searching for the exact question...";
 
       const results = await researchWeb(clean);
 
-      removeTyping();
+      if (!results || !results.length) {
+        removeTyping();
 
-      if (!results.length) {
         addAssistantReply(
-          "I couldn't retrieve reliable results for that question right now. Public search services may be unavailable or may not support this query. Please try again later."
+          "I couldn't access useful web sources right now. Please try again shortly.",
+          [],
+          "research"
         );
 
-        setStatus("Research unavailable.");
+        setStatus("Search unavailable.");
+        setBusy(false);
         return;
       }
 
-      const summary = results
-        .map((item, index) =>
-          `${index + 1}. **${item.title}**\n${item.text}`
-        )
-        .join("\n\n");
+      const researchMessage = buildResearchPrompt(
+        clean,
+        results,
+        deep
+      );
 
-      const answer =
-        "I found these web results:\n\n" +
-        summary +
-        "\n\nThis is a source-based lookup, not a fully verified report. Check the links below for details.";
+      setStatus("Analysing web sources...");
+      typingBubble.textContent = "Analysing the information...";
 
-      addAssistantReply(answer, results);
+      startModel(
+        "main",
+        [researchMessage],
+        "research",
+        results
+      );
 
-      setStatus(`Found ${results.length} source result(s).`);
       return;
     }
 
-    setStatus("Starting local AI...");
-    typingBubble.textContent =
-      "Loading local AI if needed...";
-
-    const requestId = makeId();
-
-    activeRequest = {
-      id: requestId,
-      bubble: typingBubble,
-      text: ""
-    };
+    // 3. MAIN QWEN MODEL
+    setStatus("Starting Qwen AI...");
+    typingBubble.textContent = "Loading main AI if needed...";
 
     const recentMessages = currentMessages
-      .slice(-6)
+      .filter(m => !m.mode)
+      .slice(-8)
       .map(message => ({
         role: message.role,
-        content: message.content.slice(0, 500)
+        content: message.content.slice(0, 700)
       }));
 
-    getWorker().postMessage({
-      type: "generate",
-      requestId,
-      messages: recentMessages
-    });
+    startModel("main", recentMessages, "normal");
 
   } catch (error) {
     console.error(error);
@@ -336,20 +402,12 @@ async function handleMessage(text) {
     removeTyping();
 
     addAssistantReply(
-      "Something went wrong while processing that request. Please try again."
+      "Something went wrong. Please try again."
     );
 
     setStatus("An error occurred.");
-
-  } finally {
-    if (!activeRequest) {
-      setBusy(false);
-    }
+    setBusy(false);
   }
-}
-
-function removeTyping() {
-  $("typingMessage")?.remove();
 }
 
 function onWorkerMessage(event) {
@@ -359,7 +417,11 @@ function onWorkerMessage(event) {
     setStatus(data.text);
 
     if (activeRequest) {
-      activeRequest.bubble.textContent = data.text;
+      const bubble = $("typingMessage")?.querySelector(".bubble");
+
+      if (bubble) {
+        bubble.textContent = data.text;
+      }
     }
 
     return;
@@ -371,31 +433,56 @@ function onWorkerMessage(event) {
 
   if (data.type === "token") {
     activeRequest.text += data.text;
-    activeRequest.bubble.textContent = activeRequest.text;
+
+    const bubble = $("typingMessage")?.querySelector(".bubble");
+
+    if (bubble) {
+      bubble.classList.remove("typing");
+      bubble.textContent = activeRequest.text;
+    }
+
     scrollBottom();
   }
 
   if (data.type === "done") {
-    const answer = data.text || activeRequest.text;
+    let answer = (data.text || activeRequest.text).trim();
+
+    answer = answer
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .trim();
+
+    const sources = activeRequest.sources || [];
+    const mode = activeRequest.mode || "normal";
 
     removeTyping();
-    addAssistantReply(answer);
+
+    if (!answer && mode === "greeting") {
+      answer = greetingReply("hello");
+    }
+
+    addAssistantReply(answer, sources, mode);
 
     finishRequest();
     setStatus("Ready when you are.");
   }
 
   if (data.type === "error") {
-    console.error("AGM local model:", data.text);
+    console.error("AGM model:", data.text);
+
+    const wasGreeting = activeRequest.mode === "greeting";
 
     removeTyping();
 
-    addAssistantReply(
-      "The local AI couldn't generate a reply. Your browser may have run out of memory, or the model download may have failed. Try reloading the page and sending a shorter message."
-    );
+    if (wasGreeting) {
+      addAssistantReply(greetingReply("hello"));
+    } else {
+      addAssistantReply(
+        "The AI couldn't generate a reply. Your browser may have run out of memory. Reload the page and try a shorter question."
+      );
+    }
 
     finishRequest();
-    setStatus("Local AI error.");
+    setStatus("AI error.");
   }
 }
 
@@ -412,7 +499,6 @@ form.addEventListener("submit", (event) => {
 
 input.addEventListener("input", () => {
   input.style.height = "auto";
-
   input.style.height =
     `${Math.min(input.scrollHeight, 130)}px`;
 });
