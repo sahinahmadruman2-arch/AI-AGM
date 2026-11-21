@@ -4,89 +4,152 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#090b14">
-  <title>AGM AI</title>
+  <meta name="theme-color" content="#b8e2ff">
+
+  <title>AGM AI — Something Amazing Is Coming</title>
+
+  <meta name="description" content="AGM AI is under development. We're building a better AI experience for everyone.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-  <div class="app">
-    <aside class="sidebar" id="sidebar">
-      <div class="brand">
-        <div class="brand-icon">A</div>
+
+  <div class="sky-background"></div>
+  <div class="sky-overlay"></div>
+
+  <div class="sun"></div>
+
+  <div class="floating-cloud cloud-one"></div>
+  <div class="floating-cloud cloud-two"></div>
+  <div class="floating-cloud cloud-three"></div>
+
+  <main class="page">
+
+    <nav class="navbar">
+      <a class="brand" href="#">
+        <div class="brand-logo">A</div>
         <div>
           <strong>AGM AI</strong>
-          <small>Intelligence, simplified.</small>
+          <span>Intelligence, simplified.</span>
         </div>
-      </div>
+      </a>
 
-      <button class="new-chat" id="newChat">＋ New chat</button>
-
-      <div class="side-label">WORKSPACE</div>
-      <div class="side-info">
+      <div class="nav-status">
         <span class="status-dot"></span>
-        <div>
-          <strong>AGM Smart Engine</strong>
-          <small>Local AI + Web Research</small>
-        </div>
+        DEVELOPMENT MODE
+      </div>
+    </nav>
+
+    <section class="hero">
+
+      <div class="announcement">
+        <span class="announcement-dot"></span>
+        SOMETHING NEW IS IN THE CLOUDS
       </div>
 
-      <div class="side-label">RECENT CHATS</div>
-      <div id="historyList" class="history-list"></div>
+      <div class="mascot-area">
+        <div class="mascot-glow"></div>
 
-      <div class="sidebar-bottom">
-        <button id="clearHistory" class="side-button">Clear chat history</button>
-        <div class="profile">
-          <div class="avatar">A</div>
-          <div><strong>AGM Studio</strong><small>Personal AI</small></div>
-        </div>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="topbar">
-        <button class="icon-button mobile-menu" id="menuButton" aria-label="Menu">☰</button>
-        <div class="top-title">AGM AI <span class="online-pill">● ONLINE</span></div>
-        <button class="icon-button" id="themeButton" aria-label="Toggle theme">☼</button>
-      </header>
-
-      <section class="chat-area" id="chatArea">
-        <div class="welcome" id="welcome">
-          <div class="orb"><span></span></div>
-          <div class="eyebrow">WELCOME TO AGM STUDIO</div>
-          <h1>What can I help<br><span>you discover?</span></h1>
-          <p>Ask anything. I'll research the web or chat with you.</p>
-
-          <div class="suggestions">
-            <button class="suggestion" data-prompt="Tell me something interesting.">
-              <span>✦</span><div><strong>Something interesting</strong><small>Surprise me with a fact</small></div>
-            </button>
-            <button class="suggestion" data-prompt="What are the latest technology news?">
-              <span>⌕</span><div><strong>Latest technology</strong><small>Research current topics</small></div>
-            </button>
-            <button class="suggestion" data-prompt="Explain how artificial intelligence works.">
-              <span>⌘</span><div><strong>Learn something</strong><small>Understand a new topic</small></div>
-            </button>
-            <button class="suggestion" data-prompt="Hi AGM AI!">
-              <span>☻</span><div><strong>Just chat</strong><small>Say hello</small></div>
-            </button>
+        <div class="mascot">
+          <div class="cloud-shape">
+            <div class="cloud-face">
+              <span class="eye left-eye"></span>
+              <span class="eye right-eye"></span>
+              <span class="mouth"></span>
+            </div>
+            <div class="cheek left-cheek"></div>
+            <div class="cheek right-cheek"></div>
           </div>
+
+          <div class="sparkle sparkle-one">✦</div>
+          <div class="sparkle sparkle-two">✧</div>
+          <div class="sparkle sparkle-three">✦</div>
         </div>
 
-        <div class="messages" id="messages"></div>
-      </section>
+        <div class="mascot-shadow"></div>
+      </div>
 
-      <footer class="composer-wrap">
-        <div class="status-line" id="statusLine">Ready when you are.</div>
-        <form class="composer" id="chatForm">
-          <textarea id="messageInput" rows="1" maxlength="2000"
-            placeholder="Message AGM AI..." aria-label="Message AGM AI"></textarea>
-          <button class="send-button" id="sendButton" type="submit" aria-label="Send">↑</button>
-        </form>
-        <div class="disclaimer">AGM AI can make mistakes. Verify important information using the sources.</div>
-      </footer>
-    </main>
-  </div>
+      <div class="hero-content">
 
-  <script type="module" src="script.js"></script>
+        <div class="eyebrow">A NEW CHAPTER BEGINS</div>
+
+        <h1>
+          Something
+          <span>amazing</span>
+          is coming.
+        </h1>
+
+        <p class="main-description">
+          The AGM AI is developing right now.
+          We want to give the best experience to you.
+          So we're taking our time to build something truly special.
+        </p>
+
+        <div class="development-card">
+
+          <div class="development-top">
+            <div class="development-icon">✦</div>
+
+            <div class="development-info">
+              <strong>AGM AI is under development</strong>
+              <span>Our next chapter is being built.</span>
+            </div>
+
+            <span class="working-pill">BUILDING</span>
+          </div>
+
+          <div class="progress-track">
+            <div class="progress-shimmer"></div>
+          </div>
+
+          <div class="progress-caption">
+            <span>Working behind the clouds</span>
+            <span>Stay tuned ☁️</span>
+          </div>
+
+        </div>
+
+        <div class="features">
+
+          <div class="feature">
+            <div class="feature-icon">✧</div>
+            <strong>Smarter AI</strong>
+            <span>Better conversations</span>
+          </div>
+
+          <div class="feature">
+            <div class="feature-icon">⌕</div>
+            <strong>Better Research</strong>
+            <span>Useful information</span>
+          </div>
+
+          <div class="feature">
+            <div class="feature-icon">♡</div>
+            <strong>Better Experience</strong>
+            <span>Designed for everyone</span>
+          </div>
+
+        </div>
+
+        <div class="bottom-note">
+          <span class="heart">♥</span>
+          Made with care by AGM Studio
+        </div>
+
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>© 2026 AGM AI</span>
+      <span>GOOD THINGS TAKE TIME.</span>
+    </footer>
+
+  </main>
+
 </body>
 </html>
