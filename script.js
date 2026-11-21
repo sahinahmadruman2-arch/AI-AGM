@@ -35,8 +35,8 @@ function getWorker() {
 
     worker.addEventListener("message", onWorkerMessage);
 
-    worker.addEventListener("error", (error) => {
-      console.error(error);
+    worker.addEventListener("error", error => {
+      console.error("Worker error:", error);
       setStatus("AI worker stopped.");
       finishRequest();
     });
@@ -242,7 +242,7 @@ function isCasualChat(text) {
 
   return (
     isGreeting(value) ||
-    /^(how are you|how r u|what's up|whats up|are you there|let's chat|lets chat|talk to me|tell me a joke|make me laugh|say something funny|thanks|thank you)[.!? ]*$/.test(value)
+    /^(how are you|how r u|what's up|whats up|are you there|let's chat|lets chat|talk to me|tell me a joke|make me laugh|say something funny)[.!? ]*$/.test(value)
   );
 }
 
@@ -253,12 +253,14 @@ function isDeepResearch(text) {
 }
 
 function buildResearchPrompt(question, results, deep) {
-  const sourceText = results.slice(0, deep ? 7 : 4)
+  const sourceText = results
+    .filter(item => item?.text)
+    .slice(0, deep ? 7 : 4)
     .map((item, index) => {
       return (
         `[${index + 1}] ${item.title || "Untitled"}\n` +
         `URL: ${item.url || "Unavailable"}\n` +
-        `${String(item.text || "").slice(0, deep ? 850 : 500)}`
+        `${String(item.text).slice(0, deep ? 850 : 500)}`
       );
     })
     .join("\n\n");
@@ -269,12 +271,12 @@ function buildResearchPrompt(question, results, deep) {
       `Question: ${question}\n\n` +
       `Research mode: ${deep ? "DEEP" : "QUICK"}\n\n` +
       `Available web sources:\n${sourceText}\n\n` +
-      `Write the answer directly. ` +
-      `For a simple question, answer briefly. ` +
-      `For deep research, explain the topic in sections, compare ` +
-      `the available evidence, and mention what is uncertain. ` +
-      `Use [1], [2] etc. to refer to the supplied sources. ` +
-      `Do not claim to have checked anything that is not in these sources.`
+      `Answer the question directly using the supplied sources. ` +
+      `For a simple question, keep the answer short. ` +
+      `For deep research, explain in sections, compare available ` +
+      `evidence and mention uncertainty. ` +
+      `Use [1], [2] etc. for source references. ` +
+      `Do not invent facts or claim to have checked unavailable sources.`
   };
 }
 
@@ -321,7 +323,7 @@ async function handleMessage(text) {
   const typingBubble = addTyping();
 
   try {
-    // 1. GREETING MODEL
+    // 1. GREETING AI
     if (isCasualChat(clean)) {
       setStatus("Greeting AI loading...");
       typingBubble.textContent = "Preparing a quick reply...";
@@ -345,10 +347,44 @@ async function handleMessage(text) {
       setStatus(deep ? "Deep research..." : "Searching the web...");
       typingBubble.textContent = deep
         ? "Reading available sources..."
-        : "Searching for the exact question...";
+        : "Searching available sources...";
 
-      const results = await researchWeb(clean);
+      const results = await researchWeb(
+        clean,
+        deep ? "deep" : "quick"
+      );
 
+      // Weather location missing
+      if (results?.[0]?.kind === "location_required") {
+        removeTyping();
+
+        addAssistantReply(
+          "Which city do you want the current weather for?",
+          [],
+          "research"
+        );
+
+        setStatus("Waiting for location.");
+        setBusy(false);
+        return;
+      }
+
+      // Weather location not found
+      if (results?.[0]?.kind === "weather_not_found") {
+        removeTyping();
+
+        addAssistantReply(
+          "I couldn't find that city. Please check the spelling and try again.",
+          results,
+          "research"
+        );
+
+        setStatus("Location not found.");
+        setBusy(false);
+        return;
+      }
+
+      // No sources
       if (!results || !results.length) {
         removeTyping();
 
@@ -369,8 +405,8 @@ async function handleMessage(text) {
         deep
       );
 
-      setStatus("Analysing web sources...");
-      typingBubble.textContent = "Analysing the information...";
+      setStatus("Analysing available sources...");
+      typingBubble.textContent = "Analysing information...";
 
       startModel(
         "main",
@@ -382,7 +418,7 @@ async function handleMessage(text) {
       return;
     }
 
-    // 3. MAIN QWEN MODEL
+    // 3. NORMAL QWEN CHAT
     setStatus("Starting Qwen AI...");
     typingBubble.textContent = "Loading main AI if needed...";
 
@@ -397,7 +433,7 @@ async function handleMessage(text) {
     startModel("main", recentMessages, "normal");
 
   } catch (error) {
-    console.error(error);
+    console.error("Message handling error:", error);
 
     removeTyping();
 
@@ -467,7 +503,7 @@ function onWorkerMessage(event) {
   }
 
   if (data.type === "error") {
-    console.error("AGM model:", data.text);
+    console.error("AGM model error:", data.text);
 
     const wasGreeting = activeRequest.mode === "greeting";
 
@@ -486,7 +522,8 @@ function onWorkerMessage(event) {
   }
 }
 
-form.addEventListener("submit", (event) => {
+// FORM
+form.addEventListener("submit", event => {
   event.preventDefault();
 
   const text = input.value;
@@ -503,13 +540,14 @@ input.addEventListener("input", () => {
     `${Math.min(input.scrollHeight, 130)}px`;
 });
 
-input.addEventListener("keydown", (event) => {
+input.addEventListener("keydown", event => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     form.requestSubmit();
   }
 });
 
+// BUTTONS
 $("newChat").addEventListener("click", newChat);
 
 $("clearHistory").addEventListener("click", () => {
@@ -544,6 +582,7 @@ document.querySelectorAll(".suggestion").forEach(button => {
   });
 });
 
+// STARTUP
 if (localStorage.getItem("agm_ai_theme") === "light") {
   document.body.classList.add("light");
 }
