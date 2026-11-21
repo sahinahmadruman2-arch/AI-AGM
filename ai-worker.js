@@ -6,7 +6,6 @@ const MODELS = {
   greeting: "onnx-community/SmolLM2-135M-Instruct-ONNX",
   main: "onnx-community/Qwen2.5-0.5B-Instruct"
 };
-};
 
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
