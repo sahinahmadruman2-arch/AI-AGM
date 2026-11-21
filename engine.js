@@ -94,14 +94,16 @@ function cleanText(value) {
     .trim();
 }
 
-async function fetchJSON(url, timeout = 12000) {
+async function fetchJSON(url, timeout = 10000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { Accept: "application/json" }
+      headers: {
+        Accept: "application/json"
+      }
     });
 
     if (!response.ok) {
@@ -122,14 +124,37 @@ function makeSource(title, text, url) {
   };
 }
 
-// WEATHER SEARCH
+// WEATHER
+
+function isWeatherQuery(query) {
+  return /\b(weather|temperature|forecast|rain|raining|wind speed|humidity)\b/i.test(query);
+}
 
 function getWeatherLocation(query) {
-  const match = query.match(
+  let value = query.trim();
+
+  // Examples: weather in Sylhet, temperature at Dhaka
+  const match = value.match(
     /\b(?:in|for|at|near)\s+([a-zA-Z][a-zA-Z\s-]{1,45})/i
   );
 
-  return match ? match[1].trim() : null;
+  if (match) {
+    value = match[1];
+  } else {
+    // Examples: Sylhet weather, Dhaka temperature
+    value = value
+      .replace(/\b(current|today|tomorrow|now|live|forecast|weather|temperature|rain|raining|humidity|wind speed|what is|what's|the|in|for|at|near|please)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  value = value.replace(/[?.!,]+$/g, "").trim();
+
+  if (!value || !/[a-zA-Z]/.test(value)) {
+    return null;
+  }
+
+  return value.slice(0, 45);
 }
 
 function weatherDescription(code) {
@@ -163,20 +188,29 @@ async function researchWeather(query) {
 
   if (!location) {
     return [{
+      kind: "location_required",
       title: "Weather location needed",
-      text: "Ask the user which city or location they want the current weather for. Do not guess their location.",
+      text: "The user asked for weather but did not provide a city. Ask which city they mean.",
       url: "https://open-meteo.com/"
     }];
   }
 
   const geoURL =
     "https://geocoding-api.open-meteo.com/v1/search?" +
-    `name=${encodeURIComponent(location)}&count=1&language=en&format=json`;
+    `name=${encodeURIComponent(location)}` +
+    "&count=1&language=en&format=json";
 
   const geo = await fetchJSON(geoURL);
   const place = geo.results?.[0];
 
-  if (!place) return [];
+  if (!place) {
+    return [{
+      kind: "weather_not_found",
+      title: "Location not found",
+      text: `No matching weather location was found for ${location}. Ask the user to check the city name.`,
+      url: "https://open-meteo.com/"
+    }];
+  }
 
   const weatherURL =
     "https://api.open-meteo.com/v1/forecast?" +
@@ -211,7 +245,7 @@ async function researchWeather(query) {
   ];
 }
 
-// GENERAL WEB SEARCH
+// DUCKDUCKGO INSTANT ANSWERS
 
 async function searchDuckDuckGo(query) {
   const url =
@@ -244,7 +278,9 @@ async function searchDuckDuckGo(query) {
         );
       }
 
-      if (item.Topics) collect(item.Topics);
+      if (item.Topics) {
+        collect(item.Topics);
+      }
     }
   }
 
@@ -253,7 +289,9 @@ async function searchDuckDuckGo(query) {
   return results;
 }
 
-async function searchWikipedia(query, limit = 4) {
+// WIKIPEDIA
+
+async function searchWikipedia(query, limit = 3) {
   const url =
     "https://en.wikipedia.org/w/api.php?" +
     "action=query&list=search" +
@@ -265,22 +303,37 @@ async function searchWikipedia(query, limit = 4) {
 
   const summaries = await Promise.all(
     pages.map(async item => {
-      try {
-        const pageURL =
-          "https://en.wikipedia.org/api/rest_v1/page/summary/" +
-          encodeURIComponent(item.title);
+      const pageURL =
+        "https://en.wikipedia.org/api/rest_v1/page/summary/" +
+        encodeURIComponent(item.title);
 
+      try {
         const page = await fetchJSON(pageURL);
 
-        if (!page.extract) return null;
+        const text = page.extract || item.snippet || "";
+
+        if (!text) return null;
 
         return makeSource(
           page.title || item.title,
-          page.extract,
+          text,
           page.content_urls?.desktop?.page ||
-            `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/ /g, "_"))}`
+            `https://en.wikipedia.org/wiki/${encodeURIComponent(
+              item.title.replace(/ /g, "_")
+            )}`
         );
       } catch {
+        // Keep the actual Wikipedia search snippet if summary fails.
+        if (item.snippet) {
+          return makeSource(
+            item.title,
+            item.snippet,
+            `https://en.wikipedia.org/wiki/${encodeURIComponent(
+              item.title.replace(/ /g, "_")
+            )}`
+          );
+        }
+
         return null;
       }
     })
@@ -288,6 +341,8 @@ async function searchWikipedia(query, limit = 4) {
 
   return summaries.filter(Boolean);
 }
+
+// REMOVE DUPLICATES
 
 function uniqueSources(results, limit) {
   const seen = new Set();
@@ -309,13 +364,12 @@ function uniqueSources(results, limit) {
   return unique;
 }
 
-// MAIN RESEARCH FUNCTION
+// MAIN RESEARCH
 
 export async function researchWeb(query, mode = "quick") {
   const deep = mode === "deep";
 
-  // Live weather
-  if (/\b(weather|temperature|rain|forecast)\b/i.test(query)) {
+  if (isWeatherQuery(query)) {
     try {
       return await researchWeather(query);
     } catch (error) {
@@ -324,31 +378,33 @@ export async function researchWeb(query, mode = "quick") {
     }
   }
 
-  const tasks = [
-    searchWikipedia(query, deep ? 5 : 2)
-      .catch(error => {
-        console.warn("Wikipedia search:", error);
-        return [];
-      }),
+  const wikiTask = searchWikipedia(
+    query,
+    deep ? 5 : 3
+  ).catch(error => {
+    console.warn("Wikipedia search failed:", error);
+    return [];
+  });
 
-    searchDuckDuckGo(query)
-      .catch(error => {
-        console.warn("DuckDuckGo search:", error);
-        return [];
-      })
-  ];
+  const ddgTask = searchDuckDuckGo(query)
+    .catch(error => {
+      console.warn("DuckDuckGo search failed:", error);
+      return [];
+    });
 
-  const [wikiResults, ddgResults] = await Promise.all(tasks);
+  const [wikiResults, ddgResults] = await Promise.all([
+    wikiTask,
+    ddgTask
+  ]);
 
-  const combined = uniqueSources(
+  // Prefer direct instant answers, then Wikipedia.
+  return uniqueSources(
     [...ddgResults, ...wikiResults],
     deep ? 7 : 4
   );
-
-  return combined;
 }
 
-// ROUTING
+// RESEARCH ROUTING
 
 export function needsResearch(text) {
   const value = text.toLowerCase().trim();
@@ -357,28 +413,28 @@ export function needsResearch(text) {
 
   // Deep research questions
   if (
-    /\b(deep research|research deeply|in detail|detailed explanation|comprehensive|full guide|latest research|compare in detail|explain deeply)\b/i.test(value)
+    /\b(deep research|research deeply|in detail|detailed explanation|comprehensive|full guide|latest research|compare in detail|explain deeply|how does .+ work|how .+ works|why does .+ happen|step by step)\b/i.test(value)
   ) {
     return true;
   }
 
   // Current information
   if (
-    /\b(weather|temperature|forecast|right now|currently|today|latest|current|live|breaking news|stock price|exchange rate)\b/i.test(value)
+    /\b(weather|temperature|forecast|rain|raining|right now|currently|today|latest|current|live|breaking news|stock price|exchange rate|news today)\b/i.test(value)
   ) {
     return true;
   }
 
-  // Quick factual search
+  // Direct factual questions
   if (
-    /^(what is|who is|where is|when is|when was|who was|define|search for|find|look up|tell me about)\b/i.test(value)
+    /^(what is|what are|who is|who are|where is|where are|when is|when was|who was|why is|why are|how does|how do|how is|how are|define|search for|find|look up|tell me about|explain)\b/i.test(value)
   ) {
     return true;
   }
 
   // Specific factual questions
   if (
-    /\b(population of|capital of|president of|price of|release date|version of)\b/i.test(value)
+    /\b(population of|capital of|president of|price of|release date|version of|history of|meaning of|who created|who invented|who founded|when did|how many)\b/i.test(value)
   ) {
     return true;
   }
