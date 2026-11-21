@@ -3,8 +3,9 @@ import { pipeline, env, TextStreamer } from
   "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
 
 const MODELS = {
-  greeting: "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA",
-  main: "onnx-community/Qwen3-0.6B-ONNX"
+  greeting: "onnx-community/SmolLM2-135M-Instruct-ONNX",
+  main: "onnx-community/Qwen2.5-0.5B-Instruct"
+};
 };
 
 env.allowLocalModels = false;
